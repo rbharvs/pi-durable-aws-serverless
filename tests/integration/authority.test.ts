@@ -86,7 +86,7 @@ const invalidReceives: { name: string; ns?: HarnessId; accepted: AcceptedInput }
     } as unknown as AcceptedInput,
   },
   {
-    name: "object-payload",
+    name: "foreign-object-namespace",
     accepted: {
       ...hello,
       payload: {

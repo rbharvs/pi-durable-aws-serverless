@@ -1,7 +1,23 @@
 import { type AcceptedInput, type Authority } from "./authority.ts";
-import { RequestConflict, Unavailable, InvalidInput } from "./faults.ts";
-import { type HarnessId, type RequestId, harnessId, object, requestId } from "./domain.ts";
-import { type CanonicalInput, canonicalCommand } from "./input.ts";
+import { RequestConflict, StagedContentInvalid, Unavailable, InvalidInput } from "./faults.ts";
+import {
+  check,
+  computeSha256,
+  harnessId,
+  object,
+  requestId,
+  type HarnessId,
+  type RequestId,
+} from "./domain.ts";
+import {
+  canonicalStagedInput,
+  MAX_INLINE_INPUT_BYTES,
+  prepareCommand,
+  type CanonicalInput,
+  type PreparedCommand,
+} from "./input.ts";
+import { publishedPayload, type StoredPayload } from "./payload.ts";
+import { ObjectInvalid, readAtMost, type CommandObjects } from "./object-data.ts";
 import { type Dispatch, type Events } from "./dispatch.ts";
 import { emit, cleanup } from "./diagnostics.ts";
 
@@ -13,7 +29,7 @@ export type SubmitResponse =
     }
   | {
       readonly ok: false;
-      readonly code: "invalid-input" | "request-conflict";
+      readonly code: "invalid-input" | "request-conflict" | "staged-content-invalid";
       readonly retryable: false;
     }
   | {
@@ -24,21 +40,22 @@ export type SubmitResponse =
 
 export type ApiDependencies = {
   connectAuthority(): Promise<Authority>;
+  /** Omit for inline-only admission. A handle is acquired only for staged commands. */
+  objects?(ns: HarnessId): CommandObjects;
   readonly dispatch: Dispatch;
   readonly event: Events;
   /** Optional private diagnostic sink. Full causes never enter the wire or routine events. */
   report?(cause: unknown): void;
 };
 
-function parse(input: unknown): { ns: HarnessId; request: RequestId; canonical: CanonicalInput } {
+function parse(input: unknown): { ns: HarnessId; request: RequestId; command: PreparedCommand } {
   try {
     const body = object(input);
+    const ns = harnessId(body.ns);
+    const request = requestId(body.request);
+    const command = prepareCommand(body.command, ns);
 
-    return {
-      ns: harnessId(body.ns),
-      request: requestId(body.request),
-      canonical: canonicalCommand(body.command),
-    };
+    return { ns, request, command };
   } catch (cause) {
     throw new InvalidInput(cause);
   }
@@ -49,6 +66,72 @@ async function acquireAuthority(deps: ApiDependencies): Promise<Authority> {
     return await deps.connectAuthority();
   } catch (error) {
     throw new Unavailable(error, "acquire");
+  }
+}
+
+function acquireObjects(deps: ApiDependencies, ns: HarnessId): CommandObjects {
+  if (!deps.objects) throw new InvalidInput(new Error("Staged input is not configured"));
+
+  try {
+    return deps.objects(ns);
+  } catch (error) {
+    throw new Unavailable(error, "objects-acquire");
+  }
+}
+
+async function resolveStaged(
+  objects: CommandObjects,
+  command: Extract<PreparedCommand, { kind: "s3" }>,
+): Promise<CanonicalInput> {
+  // Fix the declared integrity before the adapter receives the reference.
+  const { bytes, sha256 } = command;
+  let raw: Buffer | undefined;
+
+  try {
+    raw = await readAtMost(await objects.getStaged(command), bytes);
+  } catch (error) {
+    if (error instanceof ObjectInvalid) throw new StagedContentInvalid(error);
+
+    throw new Unavailable(error, "staged-read");
+  }
+
+  try {
+    check(
+      raw?.length === bytes && computeSha256(raw) === sha256,
+      "Staged object integrity mismatch",
+    );
+
+    return canonicalStagedInput(raw);
+  } catch (error) {
+    throw new StagedContentInvalid(error);
+  }
+}
+
+/** Reads an existing receipt; any failure is an unavailable read. */
+async function findReceipt(authority: Authority, ns: HarnessId, request: RequestId) {
+  try {
+    return await authority.get(ns, request);
+  } catch (error) {
+    throw new Unavailable(error, "receipt-read");
+  }
+}
+
+async function publish(
+  objects: CommandObjects,
+  ns: HarnessId,
+  input: CanonicalInput,
+): Promise<StoredPayload> {
+  try {
+    const payload = publishedPayload(ns, await objects.put(input.json));
+
+    check(
+      payload.sha256 === input.sha256 && payload.bytes === input.bytes,
+      "Publication identity mismatch",
+    );
+
+    return payload;
+  } catch (error) {
+    throw new Unavailable(error, "publish");
   }
 }
 
@@ -68,12 +151,39 @@ async function storeReceipt(
   }
 }
 
+/**
+ * Publishes input too large for an inline receipt, then stores its receipt. The prior read avoids
+ * an orphan publication when the request already has a receipt.
+ */
+async function receivePublished(
+  authority: Authority,
+  objects: CommandObjects,
+  ns: HarnessId,
+  request: RequestId,
+  input: CanonicalInput,
+): ReturnType<Authority["receive"]> {
+  const existing = await findReceipt(authority, ns, request);
+
+  if (existing) {
+    if (existing.hash !== input.sha256) throw new RequestConflict();
+
+    return { duplicate: true, item: existing };
+  }
+
+  const payload = await publish(objects, ns, input);
+
+  return storeReceipt(authority, ns, request, { hash: input.sha256, payload });
+}
+
 function failure(error: unknown): Extract<SubmitResponse, { ok: false }> {
   if (error instanceof InvalidInput) {
     return { ok: false, code: "invalid-input", retryable: false };
   }
   if (error instanceof RequestConflict) {
     return { ok: false, code: "request-conflict", retryable: false };
+  }
+  if (error instanceof StagedContentInvalid) {
+    return { ok: false, code: "staged-content-invalid", retryable: false };
   }
 
   return {
@@ -84,51 +194,46 @@ function failure(error: unknown): Extract<SubmitResponse, { ok: false }> {
 }
 
 /**
- * Creates the submit handler. Each call validates the request, stores an immutable receipt,
- * closes the authority, and then sends an advisory wake.
+ * Validates input, publishes large canonical JSON before its immutable receipt, closes owned
+ * resources, then sends an advisory wake. Concurrent losers and uncertain writes may leave orphans.
  *
- * `ok: true` means the receipt is durable. `invalid-input` and `request-conflict` mean this
- * input was not stored. `unavailable` and `internal` mean the outcome is unknown: retry with
- * the same request ID and the same logical content (equal canonical JSON).
+ * `ok: true` means the receipt is durable. Nonretryable responses mean this invocation did not
+ * store its input; they say nothing about earlier/concurrent submissions of the same request ID.
+ * `unavailable` and `internal` mean the outcome is unknown: retry with the same request ID and
+ * logical content (equal canonical JSON), using a currently valid staged reference when needed.
  */
 export function apiHandler(deps: ApiDependencies) {
   return async (input: unknown): Promise<SubmitResponse> => {
-    // Set while this call owns an open authority; `finally` closes it on early exit.
-    let openAuthority: Authority | undefined;
+    let ns: HarnessId;
+    let ack: Awaited<ReturnType<Authority["receive"]>>;
+    // Resources opened by this call. `finally` closes them before the wake.
+    let authority: Authority | undefined;
+    let objects: CommandObjects | undefined;
 
     try {
-      const { ns, request, canonical } = parse(input);
-      const authority = await acquireAuthority(deps);
+      const submission = parse(input);
+      const request = submission.request;
+      let canonicalInput: CanonicalInput;
 
-      openAuthority = authority;
-
-      const ack = await storeReceipt(authority, ns, request, {
-        hash: canonical.sha256,
-        payload: { kind: "inline", json: canonical.json },
-      });
-      const outcome: SubmitResponse = {
-        ok: true,
-        duplicate: ack.duplicate,
-        receivedAt: ack.item.receivedAt,
-      };
-
-      emit(deps.event, "durable-ack", {
-        ns,
-        request,
-        duplicate: ack.duplicate,
-      });
-
-      // Close before the wake, so a slow wake never holds the connection.
-      openAuthority = undefined;
-      await cleanup(authority, deps.event, "authority");
-
-      try {
-        await deps.dispatch.wake(ns);
-      } catch {
-        emit(deps.event, "hint-failed", { ns });
+      ns = submission.ns;
+      if (submission.command.kind === "inline") canonicalInput = submission.command.canonical;
+      else {
+        objects = acquireObjects(deps, ns);
+        canonicalInput = await resolveStaged(objects, submission.command);
       }
 
-      return outcome;
+      authority = await acquireAuthority(deps);
+
+      if (canonicalInput.bytes <= MAX_INLINE_INPUT_BYTES) {
+        const payload = { kind: "inline", json: canonicalInput.json } as const;
+
+        ack = await storeReceipt(authority, ns, request, { hash: canonicalInput.sha256, payload });
+      } else {
+        check(objects, "Only staged input can exceed the inline limit");
+        ack = await receivePublished(authority, objects, ns, request, canonicalInput);
+      }
+
+      emit(deps.event, "durable-ack", { ns, request, duplicate: ack.duplicate });
     } catch (error) {
       const outcome = failure(error);
 
@@ -145,7 +250,17 @@ export function apiHandler(deps: ApiDependencies) {
 
       return outcome;
     } finally {
-      if (openAuthority) await cleanup(openAuthority, deps.event, "authority");
+      // Close before the wake, so a slow wake never holds a connection.
+      if (authority) await cleanup(authority, deps.event, "authority");
+      if (objects) await cleanup(objects, deps.event, "objects");
     }
+
+    try {
+      await deps.dispatch.wake(ns);
+    } catch {
+      emit(deps.event, "hint-failed", { ns });
+    }
+
+    return { ok: true, duplicate: ack.duplicate, receivedAt: ack.item.receivedAt };
   };
 }

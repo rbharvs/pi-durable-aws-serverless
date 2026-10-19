@@ -5,6 +5,12 @@ export class InvalidInput extends Error {
   }
 }
 
+export class StagedContentInvalid extends Error {
+  constructor(cause: unknown) {
+    super("Staged content invalid", { cause });
+  }
+}
+
 export class RequestConflict extends Error {
   constructor() {
     super("Request payload mismatch");
@@ -14,7 +20,13 @@ export class RequestConflict extends Error {
 export class Unavailable extends Error {
   constructor(
     cause: unknown,
-    readonly phase: "acquire" | "receipt-write",
+    readonly phase:
+      | "acquire"
+      | "objects-acquire"
+      | "staged-read"
+      | "receipt-read"
+      | "publish"
+      | "receipt-write",
   ) {
     super("Unavailable", { cause });
   }

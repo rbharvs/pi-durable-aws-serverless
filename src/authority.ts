@@ -1,7 +1,10 @@
 import type { HarnessId, RequestId, Sha256 } from "./domain.ts";
 import type { StoredPayload } from "./payload.ts";
 
-/** A validated Pi input ready to store: its canonical JSON payload and that JSON's SHA-256. */
+/**
+ * Validated canonical Pi input, inline or already durably published, and its canonical SHA-256.
+ * SQL validates reference metadata, not object existence. Publishers guarantee immutability.
+ */
 export type AcceptedInput = {
   readonly hash: Sha256;
   readonly payload: StoredPayload;
