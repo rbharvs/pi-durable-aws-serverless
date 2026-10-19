@@ -1,4 +1,9 @@
-import type { Authority, ApiDependencies, SubmitResponse } from "../../src/index.ts";
+import type {
+  Authority,
+  ApiDependencies,
+  SubmitResponse,
+  CommandObjects,
+} from "../../src/index.ts";
 
 type Assert<T extends true> = T;
 
@@ -8,13 +13,17 @@ type Equal<A, B> =
 export type AuthorityKeys = Assert<Equal<keyof Authority, "get" | "receive" | "close">>;
 
 export type ApiDependencyKeys = Assert<
-  Equal<keyof ApiDependencies, "connectAuthority" | "dispatch" | "event" | "report">
+  Equal<keyof ApiDependencies, "connectAuthority" | "objects" | "dispatch" | "event" | "report">
+>;
+
+export type ObjectCapabilityKeys = Assert<
+  Equal<keyof CommandObjects, "getStaged" | "put" | "close">
 >;
 
 export type WireCodes = Assert<
   Equal<
     Extract<SubmitResponse, { ok: false }>["code"],
-    "invalid-input" | "request-conflict" | "unavailable" | "internal"
+    "invalid-input" | "request-conflict" | "staged-content-invalid" | "unavailable" | "internal"
   >
 >;
 

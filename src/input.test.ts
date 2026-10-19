@@ -156,11 +156,14 @@ describe("canonical Pi input boundary", () => {
     expect(blocks.json).toBe('{"content":[],"whenBusy":"followUp"}');
     expect(text.sha256).not.toBe(blocks.sha256);
   });
-  it("enforces the inline cap on canonical UTF-8 bytes and accepts only the inline transport", () => {
+  it("enforces the inline cap on canonical UTF-8 bytes and requires a namespace for staging", () => {
     const envelope = Buffer.byteLength(JSON.stringify({ ...plain, content: "" }));
     const largest = "x".repeat(MAX_INLINE_INPUT_BYTES - envelope);
 
-    expect(parseCommand(inlineCommand({ ...plain, content: largest })).input.content).toBe(largest);
+    expect(parseCommand(inlineCommand({ ...plain, content: largest }))).toEqual({
+      kind: "inline",
+      input: { ...plain, content: largest },
+    });
     // Same character count, one more UTF-8 byte.
     expect(() =>
       parseCommand(inlineCommand({ ...plain, content: largest.slice(1) + "é" })),
@@ -178,7 +181,7 @@ describe("canonical Pi input boundary", () => {
         sha256: "0".repeat(64),
         bytes: 2,
       }),
-    ).toThrow("Invalid command kind");
+    ).toThrow("Missing staging namespace");
     expect(() => parseCommand(inlineCommand({ ...plain, whenBusy: "reject" }))).toThrow(
       "Invalid whenBusy",
     );

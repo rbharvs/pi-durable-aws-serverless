@@ -16,6 +16,7 @@ import { type SqlProvider } from "./connection.ts";
 import { RequestConflict } from "../faults.ts";
 import { canonical, MAX_INLINE_INPUT_BYTES } from "../input.ts";
 import { type AcceptedInput, type Authority, type Received } from "../authority.ts";
+import { publishedPayload, type StoredPayload } from "../payload.ts";
 
 /** SQL expression for the database clock in Unix epoch milliseconds. */
 export const DB_NOW_MS = "floor(EXTRACT(EPOCH FROM now())*1000)::bigint";
@@ -49,14 +50,31 @@ function verifyInlinePayload(
 
 /** Converts a stored row to a receipt and rejects rows whose payload fails verification. */
 function parseReceivedRow(row: Row): Received {
-  const { hash, json } = verifyInlinePayload(row.payload_sha256, row.json);
+  const ns = harnessId(row.ns);
+  const hash = parseSha256(row.payload_sha256);
+  let payload: StoredPayload;
+
+  if (row.payload_kind === "inline") {
+    check(row.object_key === null && row.object_bytes === null, "Inbox payload coherence");
+    const { json } = verifyInlinePayload(hash, row.json);
+
+    payload = { kind: "inline", json };
+  } else {
+    check(row.payload_kind === "s3" && row.json === null, "Inbox payload coherence");
+    payload = publishedPayload(ns, {
+      kind: "s3",
+      key: row.object_key,
+      sha256: hash,
+      bytes: row.object_bytes,
+    });
+  }
 
   return {
     kind: "received",
-    ns: harnessId(row.ns),
+    ns,
     request: requestId(row.request_id),
     hash,
-    payload: { kind: "inline", json },
+    payload,
     receivedAt: integer(row.received_at),
   };
 }
@@ -112,16 +130,29 @@ export class SqlAuthority implements Authority {
     accepted: AcceptedInput,
   ): Promise<{ duplicate: boolean; item: Received }> {
     // Read each caller-owned field once, before the first await, then validate those values.
-    const hashValue = accepted.hash;
-    const payload = accepted.payload;
-    const kind = payload.kind;
-    const jsonValue = payload.json;
+    const hash = parseSha256(accepted.hash);
+    const source = accepted.payload;
+    const kind = source.kind;
+    let payload: StoredPayload;
 
-    check(kind === "inline", "Inbox payload coherence");
-    const { hash, json } = verifyInlinePayload(hashValue, jsonValue);
     // Branded IDs can be forged with a cast, so validate them before any SQL.
     harnessId(ns);
     requestId(request);
+
+    if (kind === "inline") {
+      const { json } = verifyInlinePayload(hash, source.json);
+
+      payload = { kind, json };
+    } else {
+      check(kind === "s3", "Inbox payload coherence");
+      payload = publishedPayload(ns, {
+        kind,
+        key: source.key,
+        sha256: source.sha256,
+        bytes: source.bytes,
+      });
+      check(payload.sha256 === hash, "Inbox payload integrity");
+    }
 
     // Each attempt reads first, so a retry observes a receipt stored by another request.
     return retryConfirmedAborts(this.provider, async () => {
@@ -131,9 +162,17 @@ export class SqlAuthority implements Authority {
 
       try {
         const rows = await this.db.query(
-          `INSERT INTO inbox(ns,request_id,payload_sha256,json,received_at)
-           VALUES($1,$2,$3,$4,${DB_NOW_MS}) RETURNING *`,
-          [ns, request, hash, json],
+          `INSERT INTO inbox(ns,request_id,payload_sha256,payload_kind,json,object_key,object_bytes,received_at)
+           VALUES($1,$2,$3,$4,$5,$6,$7,${DB_NOW_MS}) RETURNING *`,
+          [
+            ns,
+            request,
+            hash,
+            payload.kind,
+            payload.kind === "inline" ? payload.json : null,
+            payload.kind === "s3" ? payload.key : null,
+            payload.kind === "s3" ? payload.bytes : null,
+          ],
         );
 
         check(rows[0], "Inbox insert missing result");

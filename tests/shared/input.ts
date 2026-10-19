@@ -3,7 +3,9 @@ import { check } from "../../src/domain.ts";
 import type { AcceptedInput } from "../../src/authority.ts";
 
 /** Validates Pi input and returns the inline receipt input that `Authority.receive` accepts. */
-export function acceptedInput(value: unknown): AcceptedInput {
+export function acceptedInput(
+  value: unknown,
+): AcceptedInput & { payload: { kind: "inline"; json: string } } {
   const c = canonical(value);
 
   check(c.bytes <= MAX_INLINE_INPUT_BYTES, "Inline input exceeds 256 KiB");

@@ -6,7 +6,24 @@ export { apiHandler, type ApiDependencies, type SubmitResponse } from "./submit.
 
 export { harnessId, requestId, type HarnessId, type RequestId } from "./domain.ts";
 
-export { canonical, parseCommand, type Command, type AgentInput } from "./input.ts";
+export {
+  canonical,
+  parseCommand,
+  stagedReference,
+  type Command,
+  type AgentInput,
+  type StagedReference,
+  type StagedKey,
+} from "./input.ts";
+
+export { ObjectInvalid, type CommandObjects } from "./object-data.ts";
+
+export {
+  publishedPayload,
+  type StoredPayload,
+  type PublishedPayload,
+  type ObjectKey,
+} from "./payload.ts";
 
 export type { AcceptedInput, Authority, ApiAuthority, InboxItem, Received } from "./authority.ts";
 
