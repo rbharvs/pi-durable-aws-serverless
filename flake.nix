@@ -1,7 +1,7 @@
 {
   description = "Development tools for pi-durable-aws-serverless";
 
-  inputs.nixpkgs.url = "github:NixOS/nixpkgs/3ed67ec0a4d3c7ab4ae1f04f8ee8df07bfa506a2";
+  inputs.nixpkgs.url = "github:NixOS/nixpkgs/f20cd90e28fe0403873f473b29e42662cd86e8c4";
 
   outputs = { nixpkgs, ... }:
     let
@@ -13,9 +13,9 @@
         in {
           default = pkgs.mkShellNoCC {
             packages = [
-              pkgs.nodejs_22
+              pkgs.nodejs_24
               pkgs.gitMinimal
-              (pkgs.pnpm_10.override { nodejs-slim = pkgs.nodejs_22; })
+              pkgs.pnpm_12
             ];
           };
         });
