@@ -74,7 +74,7 @@ export async function traced(hook: QueryHook = async () => {}, trace: Query[] = 
   return { control, trace };
 }
 
-/** A unique namespace that is not created in advance; ingress must create its head itself. */
+/** An isolated receipt namespace. */
 export async function namespace(label: string) {
   const ns = harnessId(`test_${label}_${randomUUID().replaceAll("-", "")}`),
     control = new Control(await Database.connect(provider), provider);
@@ -89,14 +89,9 @@ export async function namespace(label: string) {
       ]);
     },
 
-    async heads(): Promise<Row[]> {
-      return control.inspectionDb.query("SELECT * FROM harness WHERE ns=$1", [ns]);
-    },
-
     async finish() {
       try {
-        for (const table of ["inbox", "harness"])
-          await control.inspectionDb.query(`DELETE FROM ${table} WHERE starts_with(ns, $1)`, [ns]);
+        await control.inspectionDb.query("DELETE FROM inbox WHERE starts_with(ns, $1)", [ns]);
       } finally {
         await control.close();
       }

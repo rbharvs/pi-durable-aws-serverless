@@ -10,7 +10,6 @@ import { SqlAuthority } from "../../src/sql/authority.ts";
 import { postgresProvider } from "../../src/sql/connection.ts";
 import { Database } from "../../src/sql/db.ts";
 import { canonical, MAX_INLINE_INPUT_BYTES } from "../../src/input.ts";
-import { errorCode } from "../../src/domain.ts";
 import {
   abort,
   namespace,
@@ -174,7 +173,6 @@ it("five concurrent equal requests produce exactly one first acceptance of arbit
     expect(rows).toHaveLength(1);
     expect(rows[0].json).toBe(canonical(input).json);
     expect(JSON.parse(String(rows[0].json))).toEqual(input);
-    expect(await f.heads()).toHaveLength(1);
   } finally {
     await f.finish();
   }
@@ -191,12 +189,20 @@ it("rejects invalid input without acquiring a connection or creating state", asy
     },
   });
 
+  const sparse: unknown[] = [],
+    sparseWithText: unknown[] = [];
+
+  sparse.length = 1;
+  sparseWithText[1] = { type: "text", text: "after hole" };
+
   try {
     for (const command of [
       { kind: "s3", key: `in/${f.ns}/a`, sha256: "0".repeat(64), bytes: 2 },
       inline({ ...plain, content: "x".repeat(MAX_INLINE_INPUT_BYTES) }),
       inline({ ...plain, content: [{ ...image, data: "AR==" }] }),
       inline({ ...plain, whenBusy: "reject" }),
+      inline({ ...plain, content: sparse }),
+      inline({ ...plain, content: sparseWithText }),
       { ...inline(plain), extra: true },
     ])
       expect(await a.run({ ns: f.ns, request: "bad", command })).toEqual({
@@ -214,7 +220,6 @@ it("rejects invalid input without acquiring a connection or creating state", asy
     expect(connects).toBe(0);
     expect(a.hints).toEqual([]);
     expect(await f.inbox()).toEqual([]);
-    expect(await f.heads()).toEqual([]);
   } finally {
     await f.finish();
   }
@@ -267,51 +272,6 @@ it("stores the validated first read of an accessor input, not a caller-owned val
     await f.finish();
   }
 });
-
-const advancedHead = {
-  epoch: "7",
-  owner: "6f1c2b0e-3d4a-4c5b-8e6f-7a8b9c0d1e2f",
-  lease_until: "99",
-  next_seq: "41",
-  next_id: "42",
-};
-
-for (const arrival of ["before the request", "after the empty head read"] as const)
-  it(`never rewrites an existing head that appears ${arrival}`, async () => {
-    const f = await namespace("api_head"),
-      trace: Query[] = [];
-    const insertHead = () =>
-      f.control.inspectionDb.query(
-        "INSERT INTO harness(ns,epoch,owner,lease_until,next_seq,next_id) VALUES($1,$2,$3,$4,$5,$6)",
-        [f.ns, ...Object.values(advancedHead)],
-      );
-    let raced = false;
-    // The concurrent creator commits between our empty head SELECT and our head INSERT.
-    const racing = tracedConnect(async (phase, sql) => {
-      if (raced || phase !== "before" || !sql.startsWith("INSERT INTO harness")) return;
-      raced = true;
-      await insertHead();
-    }, trace);
-
-    try {
-      if (arrival === "before the request") await insertHead();
-
-      const a = api(arrival === "before the request" ? {} : { connectAuthority: racing });
-
-      expect(await a.run({ ns: f.ns, request: "one", command: inline(plain) })).toMatchObject({
-        ok: true,
-        duplicate: false,
-      });
-      expect(await f.heads()).toEqual([{ ns: f.ns, ...advancedHead }]);
-      expect(await f.inbox()).toHaveLength(1);
-      if (arrival === "after the empty head read")
-        expect(statements(trace, "INSERT INTO harness").map((q) => errorCode(q.error))).toEqual([
-          "23505",
-        ]);
-    } finally {
-      await f.finish();
-    }
-  });
 
 it("a confirmed INSERT abort is re-read and then acknowledged once", async () => {
   const f = await namespace("api_abort"),
@@ -383,13 +343,16 @@ it("a receipt-read fault is unavailable and never writes", async () => {
     const response = await a.run({ ns: f.ns, request: "one", command: inline(plain) });
 
     expect(response).toEqual(unavailable);
-    expect(a.reports[0]).toMatchObject({ phase: "receipt-read" });
+    expect(a.reports[0]).toMatchObject({
+      phase: "receipt-write",
+      cause: { message: "SELECT private read failed" },
+    });
     expect(a.events).toEqual([
-      { name: "submit-failed", code: "unavailable", phase: "receipt-read" },
+      { name: "submit-failed", code: "unavailable", phase: "receipt-write" },
     ]);
-    expect(trace.map((q) => q.sql)).toEqual(["SELECT * FROM inbox WHERE ns=$1 AND request_id=$2"]);
+    expect(statements(trace, "INSERT INTO inbox")).toEqual([]);
+    expect(await f.inbox()).toEqual([]);
     expect(a.hints).toEqual([]);
-    expect(await f.heads()).toEqual([]);
   } finally {
     await f.finish();
   }
@@ -400,28 +363,30 @@ for (const winner of ["identical", "different"] as const)
     const f = await namespace("api_insert_race"),
       trace: Query[] = [],
       other = { ...plain, content: "race winner" };
-    let raced = false;
+    let raced = false,
+      winnerTime: number | undefined;
     const a = api({
       connectAuthority: tracedConnect(async (phase, sql) => {
         if (raced || phase !== "before" || !sql.startsWith("INSERT INTO inbox")) return;
         raced = true;
-        await f.control.receive(
-          f.ns,
-          requestId("race"),
-          inlineInput(winner === "identical" ? plain : other),
-        );
+        winnerTime = (
+          await f.control.receive(
+            f.ns,
+            requestId("race"),
+            inlineInput(winner === "identical" ? plain : other),
+          )
+        ).item.receivedAt;
       }, trace),
     });
 
     try {
       const response = await a.run({ ns: f.ns, request: "race", command: inline(plain) });
 
-      if (winner === "identical") expect(response).toMatchObject({ ok: true, duplicate: true });
+      if (winner === "identical")
+        expect(response).toEqual({ ok: true, duplicate: true, receivedAt: winnerTime });
       else expect(response).toEqual({ ok: false, code: "request-conflict", retryable: false });
       expect(statements(trace, "INSERT INTO inbox")).toHaveLength(1);
-      expect(trace.find((q) => q.sql.startsWith("INSERT INTO inbox"))?.error).toMatchObject({
-        code: "23505",
-      });
+      expect(raced).toBe(true);
       expect(a.hints).toEqual(winner === "identical" ? [f.ns] : []);
       expect((await f.control.get(f.ns, requestId("race")))?.payload).toEqual(
         inlineInput(winner === "identical" ? plain : other).payload,
@@ -538,4 +503,27 @@ it("a real connection acquisition failure is unavailable and keeps provider deta
   expect(a.reports[0]).toMatchObject({ phase: "acquire", cause: { code: "28P01" } });
   expect(JSON.stringify([response, a.events])).not.toMatch(/password|postgres/);
   expect(a.hints).toEqual([]);
+});
+
+it("reports unavailable with the original cause when a unique violation has no visible winner", async () => {
+  const f = await namespace("missing_winner"),
+    trace: Query[] = [];
+  const original = Object.assign(Error("injected unique violation without a visible winner"), {
+    code: "23505",
+  });
+  const a = api({
+    connectAuthority: tracedConnect(async (phase, sql) => {
+      if (phase === "before" && sql.startsWith("INSERT INTO inbox")) throw original;
+    }, trace),
+  });
+  try {
+    expect(await a.run({ ns: f.ns, request: "one", command: inline(plain) })).toEqual(unavailable);
+    expect(a.reports[0]).toMatchObject({ phase: "receipt-write", cause: original });
+    expect((a.reports[0] as { cause: unknown }).cause).toBe(original);
+    expect(await f.inbox()).toEqual([]);
+    expect(a.hints).toEqual([]);
+    expect(statements(trace, "INSERT INTO inbox")).toHaveLength(1);
+  } finally {
+    await f.finish();
+  }
 });

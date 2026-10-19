@@ -1,6 +1,5 @@
 import { expect, it } from "vitest";
 import { Database } from "../../src/sql/db.ts";
-import { createNamespace } from "../../src/sql/authority.ts";
 import { harnessId, requestId, sha, type HarnessId, type Sha256 } from "../../src/domain.ts";
 import { canonical, MAX_INLINE_INPUT_BYTES } from "../../src/input.ts";
 import type { AcceptedInput } from "../../src/submit.ts";
@@ -47,9 +46,6 @@ it("concurrent inserts acknowledge one immutable command; mismatch never replace
       before,
     );
     expect(before).toHaveLength(1);
-    expect(
-      await f.control.inspectionDb.query("SELECT ns FROM harness WHERE ns=$1", [ns]),
-    ).toHaveLength(1);
   } finally {
     await Promise.all(controls.map((c) => c.close()));
     await f.finish();
@@ -64,7 +60,7 @@ for (const invalid of [
   "object-payload",
   "invalid-namespace",
 ] as const)
-  it(`raw receive rejects ${invalid} before any SQL, so neither receipt nor namespace exists`, async () => {
+  it(`raw receive rejects ${invalid} before any SQL or receipt exists`, async () => {
     const f = await namespace("raw_invalid"),
       { control, trace } = await traced();
     const json = '{"content":"hello","whenBusy":"followUp"}',
@@ -95,7 +91,6 @@ for (const invalid of [
       await expect(control.receive(ns, requestId("bad"), accepted)).rejects.toThrow();
       expect(trace).toEqual([]);
       expect(await f.inbox()).toEqual([]);
-      expect(await f.heads()).toEqual([]);
     } finally {
       await control.close();
       await f.finish();
@@ -180,14 +175,19 @@ for (const winner of ["identical", "different"] as const)
 
 it("persistent confirmed aborts stop after three re-read attempts without a receipt", async () => {
   const f = await namespace("abort_bound");
+  const causes: unknown[] = [];
   const { control, trace } = await traced(async (phase, sql) => {
-    if (phase === "before" && sql.startsWith("INSERT INTO inbox")) throw abort();
+    if (phase !== "before" || !sql.startsWith("INSERT INTO inbox")) return;
+    causes.push(abort());
+
+    throw causes.at(-1);
   });
 
   try {
-    await expect(control.receive(f.ns, requestId("one"), hello)).rejects.toMatchObject({
-      code: "40001",
-    });
+    const failed = await control.receive(f.ns, requestId("one"), hello).catch((error) => error);
+
+    expect(failed).toBe(causes[2]);
+    expect(causes).toHaveLength(3);
     expect(statements(trace, "INSERT INTO inbox")).toHaveLength(3);
     expect(await f.inbox()).toEqual([]);
   } finally {
@@ -220,80 +220,9 @@ for (const applied of [true, false])
     }
   });
 
-it("namespace creation re-reads after a confirmed abort and tolerates concurrent creators", async () => {
-  const f = await namespace("namespace_abort");
-  const { control, trace } = await traced(once("before", "INSERT INTO harness", abort));
-
-  try {
-    await createNamespace(control.inspectionDb, provider, f.ns);
-
-    const sql = trace.map((q) => q.sql);
-    const inserts = sql.flatMap((s, i) => (s.startsWith("INSERT INTO harness") ? [i] : []));
-
-    expect(inserts).toHaveLength(2);
-    expect(sql.slice(inserts[0] + 1, inserts[1]).some((s) => s.startsWith("SELECT"))).toBe(true);
-
-    const fresh = harnessId(f.ns + "_concurrent");
-
-    await Promise.all(
-      Array.from({ length: 5 }, async () => {
-        const db = await Database.connect(provider);
-
-        try {
-          await createNamespace(db, provider, fresh);
-        } finally {
-          await db.end();
-        }
-      }),
-    );
-
-    const heads = await f.control.inspectionDb.query(
-      "SELECT ns,epoch,owner,next_seq,next_id FROM harness WHERE ns IN ($1,$2) ORDER BY ns",
-      [f.ns, fresh],
-    );
-
-    expect(heads).toEqual(
-      [f.ns, fresh].map((ns) => ({ ns, epoch: "0", owner: null, next_seq: "1", next_id: "2" })),
-    );
-  } finally {
-    await control.close();
-    await f.finish();
-  }
-});
-
-it("persistent confirmed head INSERT aborts stop after three attempts and propagate the original cause", async () => {
-  const f = await namespace("head_abort_bound"),
-    causes: unknown[] = [];
-  const { control, trace } = await traced(async (phase, sql) => {
-    if (phase !== "before" || !sql.startsWith("INSERT INTO harness")) return;
-    causes.push(abort());
-
-    throw causes.at(-1);
-  });
-
-  try {
-    const failed = await control.receive(f.ns, requestId("one"), hello).catch((error) => error);
-
-    expect(statements(trace, "INSERT INTO harness")).toHaveLength(3);
-    expect(causes).toHaveLength(3);
-    expect(failed).toBe(causes[2]);
-    expect(statements(trace, "INSERT INTO inbox")).toEqual([]);
-    expect(await f.heads()).toEqual([]);
-    expect(await f.inbox()).toEqual([]);
-  } finally {
-    await control.close();
-    await f.finish();
-  }
-});
-
 const corruptions = [
   ["noncanonical json", "json=' '||json"],
   ["hash mismatch", `payload_sha256='${sha("other")}'`],
-  ["unsupported admission mapping", "submission_id=20"],
-  [
-    "object payload",
-    "payload_kind='s3',json=NULL,object_key='p/x/00000000-0000-4000-8000-000000000000',object_bytes=262145",
-  ],
 ] as const;
 
 for (const [name, assignment] of corruptions)

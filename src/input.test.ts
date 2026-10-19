@@ -147,3 +147,47 @@ describe("canonical Pi input boundary", () => {
     );
   });
 });
+
+it("canonicalizes indexed blocks without invoking a caller iterator", () => {
+  let iteratorCalls = 0;
+  const content = [{ type: "text", text: "indexed" }];
+  Object.defineProperty(content, Symbol.iterator, {
+    value: function* () {
+      iteratorCalls++;
+      for (let i = 0; i <= MAX_BLOCKS; i++) yield { type: "text", text: "iterator" };
+    },
+  });
+  expect(canonical({ content, whenBusy: "followUp" })).toEqual(
+    canonical({ content: [{ type: "text", text: "indexed" }], whenBusy: "followUp" }),
+  );
+  expect(iteratorCalls).toBe(0);
+});
+
+it("captures array length once before bounded indexed traversal", () => {
+  let lengthReads = 0;
+  const blocks = Array.from({ length: MAX_BLOCKS + 10 }, (_, i) => ({
+    type: "text",
+    text: String(i),
+  }));
+  const content = new Proxy(blocks, {
+    get(target, property, receiver) {
+      if (property === "length") return ++lengthReads === 1 ? 1 : target.length;
+      return Reflect.get(target, property, receiver);
+    },
+  });
+  expect(canonical({ content, whenBusy: "followUp" })).toEqual(
+    canonical({ content: [{ type: "text", text: "0" }], whenBusy: "followUp" }),
+  );
+  expect(lengthReads).toBe(1);
+});
+
+it("rejects indexed holes even if a caller iterator supplies valid blocks", () => {
+  const content: unknown[] = [];
+  content.length = 1;
+  Object.defineProperty(content, Symbol.iterator, {
+    value: function* () {
+      yield { type: "text", text: "not the indexed value" };
+    },
+  });
+  expect(() => canonical({ content, whenBusy: "followUp" })).toThrow();
+});

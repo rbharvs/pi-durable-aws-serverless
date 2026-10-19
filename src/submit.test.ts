@@ -37,7 +37,15 @@ it("rejects malformed requests as invalid input before acquiring authority", asy
   const f = fixture(async () => {
     throw Error("must not connect");
   });
+  const sparse: unknown[] = [];
+
+  sparse.length = 1;
   const malformed = [
+    {
+      ns: "api",
+      request: "r",
+      command: { kind: "inline", input: { content: sparse, whenBusy: "followUp" } },
+    },
     null,
     [],
     "text",

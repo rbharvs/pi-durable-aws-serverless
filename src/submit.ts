@@ -1,14 +1,7 @@
-import { type ApiAuthority, type InboxItem } from "./authority.ts";
+import { type Authority } from "./authority.ts";
 import { RequestConflict, Unavailable, InvalidInput } from "./faults.ts";
-import {
-  type HarnessId,
-  type RequestId,
-  type Sha256,
-  harnessId,
-  object,
-  requestId,
-} from "./domain.ts";
-import { canonical, type Command, parseCommand } from "./input.ts";
+import { type Sha256, harnessId, object, requestId } from "./domain.ts";
+import { canonicalCommand } from "./input.ts";
 import { type StoredPayload } from "./payload.ts";
 import { type Dispatch, type Events } from "./dispatch.ts";
 import { emit, cleanup } from "./diagnostics.ts";
@@ -17,39 +10,6 @@ export type AcceptedInput = {
   readonly hash: Sha256;
   readonly payload: StoredPayload;
 };
-
-/** Canonical receipt acceptance. Acceptance is durable input, not execution. */
-export async function admit(
-  control: ApiAuthority,
-  ns: HarnessId,
-  request: RequestId,
-  command: Command,
-): Promise<{ duplicate: boolean; item: InboxItem }> {
-  const c = canonical(command.input);
-  let existing;
-
-  try {
-    existing = await control.get(ns, request);
-  } catch (error) {
-    throw new Unavailable(error, "receipt-read");
-  }
-
-  if (existing) {
-    if (existing.hash !== c.sha256) throw new RequestConflict();
-
-    return { duplicate: true, item: existing };
-  }
-
-  const payload: StoredPayload = { kind: "inline", json: c.json };
-
-  try {
-    return await control.receive(ns, request, { hash: c.sha256, payload });
-  } catch (error) {
-    if (error instanceof RequestConflict) throw error;
-
-    throw new Unavailable(error, "receipt-write");
-  }
-}
 
 export type SubmitResponse =
   | {
@@ -69,7 +29,7 @@ export type SubmitResponse =
     };
 
 export type ApiDependencies = {
-  connectAuthority(): Promise<ApiAuthority>;
+  connectAuthority(): Promise<Authority>;
   readonly dispatch: Dispatch;
   readonly event: Events;
   /** Optional private diagnostic sink. Full causes never enter the wire or routine events. */
@@ -83,7 +43,7 @@ function parse(input: unknown) {
     return {
       ns: harnessId(v.ns),
       request: requestId(v.request),
-      command: parseCommand(v.command),
+      canonical: canonicalCommand(v.command),
     };
   } catch (cause) {
     throw new InvalidInput(cause);
@@ -105,10 +65,10 @@ function failure(error: unknown): Extract<SubmitResponse, { ok: false }> {
 /** Success means known durable receipt. No error asserts non-acceptance. Retry identical logical content only. */
 export function apiHandler(deps: ApiDependencies) {
   return async (input: unknown): Promise<SubmitResponse> => {
-    let control: ApiAuthority | undefined;
+    let control: Authority | undefined;
 
     try {
-      const { ns, request, command } = parse(input);
+      const { ns, request, canonical: c } = parse(input);
 
       try {
         control = await deps.connectAuthority();
@@ -116,7 +76,18 @@ export function apiHandler(deps: ApiDependencies) {
         throw new Unavailable(error, "acquire");
       }
 
-      const ack = await admit(control, ns, request, command);
+      let ack;
+
+      try {
+        ack = await control.receive(ns, request, {
+          hash: c.sha256,
+          payload: { kind: "inline", json: c.json },
+        });
+      } catch (error) {
+        if (error instanceof RequestConflict) throw error;
+
+        throw new Unavailable(error, "receipt-write");
+      }
       const outcome: SubmitResponse = {
         ok: true,
         duplicate: ack.duplicate,
@@ -128,6 +99,9 @@ export function apiHandler(deps: ApiDependencies) {
         request,
         duplicate: ack.duplicate,
       });
+
+      await cleanup(() => control!.close(), deps.event, "authority");
+      control = undefined;
 
       try {
         await deps.dispatch.wake(ns);

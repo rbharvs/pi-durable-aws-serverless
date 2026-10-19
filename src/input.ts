@@ -48,15 +48,15 @@ export function parseAgentInput(value: unknown): AgentInput {
 
   if (typeof source === "string") content = source;
   else {
-    check(
-      Array.isArray(source) && source.length <= MAX_BLOCKS,
-      "Invalid or too many content blocks",
-    );
+    check(Array.isArray(source), "Invalid or too many content blocks");
+    // Capture the bound once; indexed traversal ignores caller iterators and rejects holes.
+    const count = source.length;
+    check(count >= 0 && count <= MAX_BLOCKS, "Invalid or too many content blocks");
 
     let images = 0;
 
-    content = source.map((value): TextContent | ImageContent => {
-      const block = object(value),
+    content = Array.from({ length: count }, (_, index): TextContent | ImageContent => {
+      const block = object(source[index]),
         type = block.type;
 
       if (type === "text") {
@@ -114,7 +114,7 @@ export function canonical(value: unknown): CanonicalInput {
   return { input, json, bytes, sha256: sha(json) };
 }
 
-export function parseCommand(value: unknown): Command {
+export function canonicalCommand(value: unknown): CanonicalInput {
   const v = object(value);
 
   check(v.kind === "inline", "Invalid command kind");
@@ -124,5 +124,9 @@ export function parseCommand(value: unknown): Command {
 
   check(c.bytes <= MAX_INLINE_INPUT_BYTES, "Inline input exceeds 256 KiB");
 
-  return { kind: "inline", input: c.input };
+  return c;
+}
+
+export function parseCommand(value: unknown): Command {
+  return { kind: "inline", input: canonicalCommand(value).input };
 }

@@ -14,7 +14,7 @@ export class RequestConflict extends Error {
 export class Unavailable extends Error {
   constructor(
     cause: unknown,
-    readonly phase: "acquire" | "receipt-read" | "receipt-write",
+    readonly phase: "acquire" | "receipt-write",
   ) {
     super("Unavailable", { cause });
   }
