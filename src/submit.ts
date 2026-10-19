@@ -1,15 +1,9 @@
-import { type Authority } from "./authority.ts";
+import { type AcceptedInput, type Authority } from "./authority.ts";
 import { RequestConflict, Unavailable, InvalidInput } from "./faults.ts";
-import { type Sha256, harnessId, object, requestId } from "./domain.ts";
-import { canonicalCommand } from "./input.ts";
-import { type StoredPayload } from "./payload.ts";
+import { type HarnessId, type RequestId, harnessId, object, requestId } from "./domain.ts";
+import { type CanonicalInput, canonicalCommand } from "./input.ts";
 import { type Dispatch, type Events } from "./dispatch.ts";
 import { emit, cleanup } from "./diagnostics.ts";
-
-export type AcceptedInput = {
-  readonly hash: Sha256;
-  readonly payload: StoredPayload;
-};
 
 export type SubmitResponse =
   | {
@@ -36,24 +30,51 @@ export type ApiDependencies = {
   report?(cause: unknown): void;
 };
 
-function parse(input: unknown) {
+function parse(input: unknown): { ns: HarnessId; request: RequestId; canonical: CanonicalInput } {
   try {
-    const v = object(input);
+    const body = object(input);
 
     return {
-      ns: harnessId(v.ns),
-      request: requestId(v.request),
-      canonical: canonicalCommand(v.command),
+      ns: harnessId(body.ns),
+      request: requestId(body.request),
+      canonical: canonicalCommand(body.command),
     };
   } catch (cause) {
     throw new InvalidInput(cause);
   }
 }
 
+async function acquireAuthority(deps: ApiDependencies): Promise<Authority> {
+  try {
+    return await deps.connectAuthority();
+  } catch (error) {
+    throw new Unavailable(error, "acquire");
+  }
+}
+
+/** Stores the receipt. Any failure other than a conflict has an unknown outcome. */
+async function storeReceipt(
+  authority: Authority,
+  ns: HarnessId,
+  request: RequestId,
+  accepted: AcceptedInput,
+): ReturnType<Authority["receive"]> {
+  try {
+    return await authority.receive(ns, request, accepted);
+  } catch (error) {
+    if (error instanceof RequestConflict) throw error;
+
+    throw new Unavailable(error, "receipt-write");
+  }
+}
+
 function failure(error: unknown): Extract<SubmitResponse, { ok: false }> {
-  if (error instanceof InvalidInput) return { ok: false, code: "invalid-input", retryable: false };
-  if (error instanceof RequestConflict)
+  if (error instanceof InvalidInput) {
+    return { ok: false, code: "invalid-input", retryable: false };
+  }
+  if (error instanceof RequestConflict) {
     return { ok: false, code: "request-conflict", retryable: false };
+  }
 
   return {
     ok: false,
@@ -62,32 +83,29 @@ function failure(error: unknown): Extract<SubmitResponse, { ok: false }> {
   };
 }
 
-/** Success means known durable receipt. No error asserts non-acceptance. Retry identical logical content only. */
+/**
+ * Creates the submit handler. Each call validates the request, stores an immutable receipt,
+ * closes the authority, and then sends an advisory wake.
+ *
+ * `ok: true` means the receipt is durable. `invalid-input` and `request-conflict` mean this
+ * input was not stored. `unavailable` and `internal` mean the outcome is unknown: retry with
+ * the same request ID and the same logical content (equal canonical JSON).
+ */
 export function apiHandler(deps: ApiDependencies) {
   return async (input: unknown): Promise<SubmitResponse> => {
-    let control: Authority | undefined;
+    // Set while this call owns an open authority; `finally` closes it on early exit.
+    let openAuthority: Authority | undefined;
 
     try {
-      const { ns, request, canonical: c } = parse(input);
+      const { ns, request, canonical } = parse(input);
+      const authority = await acquireAuthority(deps);
 
-      try {
-        control = await deps.connectAuthority();
-      } catch (error) {
-        throw new Unavailable(error, "acquire");
-      }
+      openAuthority = authority;
 
-      let ack;
-
-      try {
-        ack = await control.receive(ns, request, {
-          hash: c.sha256,
-          payload: { kind: "inline", json: c.json },
-        });
-      } catch (error) {
-        if (error instanceof RequestConflict) throw error;
-
-        throw new Unavailable(error, "receipt-write");
-      }
+      const ack = await storeReceipt(authority, ns, request, {
+        hash: canonical.sha256,
+        payload: { kind: "inline", json: canonical.json },
+      });
       const outcome: SubmitResponse = {
         ok: true,
         duplicate: ack.duplicate,
@@ -100,8 +118,9 @@ export function apiHandler(deps: ApiDependencies) {
         duplicate: ack.duplicate,
       });
 
-      await cleanup(() => control!.close(), deps.event, "authority");
-      control = undefined;
+      // Close before the wake, so a slow wake never holds the connection.
+      openAuthority = undefined;
+      await cleanup(authority, deps.event, "authority");
 
       try {
         await deps.dispatch.wake(ns);
@@ -121,12 +140,12 @@ export function apiHandler(deps: ApiDependencies) {
       try {
         deps.report?.(error);
       } catch {
-        /* diagnostics never change an outcome */
+        // Report failures are deliberately ignored; diagnostics never change an outcome.
       }
 
       return outcome;
     } finally {
-      if (control) await cleanup(() => control!.close(), deps.event, "authority");
+      if (openAuthority) await cleanup(openAuthority, deps.event, "authority");
     }
   };
 }

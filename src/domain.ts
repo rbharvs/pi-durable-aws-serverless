@@ -51,11 +51,13 @@ export function requestId(value: unknown): RequestId {
   return s as RequestId;
 }
 
-export function sha(value: string | Uint8Array): Sha256 {
+/** Hashes `value` and returns the lowercase hex SHA-256 digest. */
+export function computeSha256(value: string | Uint8Array): Sha256 {
   return createHash("sha256").update(value).digest("hex") as Sha256;
 }
 
-export function digest(value: unknown): Sha256 {
+/** Validates that `value` is a lowercase hex SHA-256 digest. Does not hash. */
+export function parseSha256(value: unknown): Sha256 {
   const s = text(value);
 
   check(/^[a-f0-9]{64}$/.test(s), "Invalid digest");

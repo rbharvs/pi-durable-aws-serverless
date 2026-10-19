@@ -1,34 +1,55 @@
 import { Database, type Row } from "./db.ts";
 import {
   check,
-  digest,
   errorCode,
   harnessId,
   integer,
+  parseSha256,
   requestId,
   sleep,
   text,
   type HarnessId,
   type RequestId,
+  type Sha256,
 } from "../domain.ts";
 import { type SqlProvider } from "./connection.ts";
 import { RequestConflict } from "../faults.ts";
-import { type AcceptedInput } from "../submit.ts";
 import { canonical, MAX_INLINE_INPUT_BYTES } from "../input.ts";
-import { type Authority, type Received } from "../authority.ts";
+import { type AcceptedInput, type Authority, type Received } from "../authority.ts";
 
+/** SQL expression for the database clock in Unix epoch milliseconds. */
 export const DB_NOW_MS = "floor(EXTRACT(EPOCH FROM now())*1000)::bigint";
 
-function item(row: Row): Received {
-  const hash = digest(row.payload_sha256);
+/** PostgreSQL SQLSTATE for a unique constraint violation. */
+const UNIQUE_VIOLATION = "23505";
 
-  const json = text(row.json);
+const MAX_ATTEMPTS = 3;
+
+const RETRY_BACKOFF_MS = 20;
+
+/**
+ * Checks that `json` is canonical Pi input within the inline cap and that `hash` is its SHA-256.
+ * The byte cap is checked before parsing.
+ */
+function verifyInlinePayload(
+  hashValue: unknown,
+  jsonValue: unknown,
+): { hash: Sha256; json: string } {
+  const hash = parseSha256(hashValue);
+  const json = text(jsonValue);
 
   check(Buffer.byteLength(json) <= MAX_INLINE_INPUT_BYTES, "Inbox payload integrity");
 
-  const c = canonical(JSON.parse(json));
+  const reparsed = canonical(JSON.parse(json));
 
-  check(c.json === json && c.sha256 === hash, "Inbox payload integrity");
+  check(reparsed.json === json && reparsed.sha256 === hash, "Inbox payload integrity");
+
+  return { hash, json };
+}
+
+/** Converts a stored row to a receipt and rejects rows whose payload fails verification. */
+function parseReceivedRow(row: Row): Received {
+  const { hash, json } = verifyInlinePayload(row.payload_sha256, row.json);
 
   return {
     kind: "received",
@@ -40,17 +61,30 @@ function item(row: Row): Received {
   };
 }
 
-/** These are single autocommit statements. A provider-confirmed abort committed nothing.
- * Re-entering the operation first re-reads authority; unknown outcomes are never retried. */
-async function repeatable<T>(provider: SqlProvider, operation: () => Promise<T>): Promise<T> {
+/**
+ * Runs `operation` again after a provider-confirmed abort, up to `MAX_ATTEMPTS` attempts.
+ * Each statement autocommits, so a confirmed abort committed nothing.
+ * Any other error, including an unknown outcome, is thrown without a retry.
+ */
+async function retryConfirmedAborts<T>(
+  provider: SqlProvider,
+  operation: () => Promise<T>,
+): Promise<T> {
   for (let attempt = 1; ; attempt++) {
     try {
       return await operation();
-    } catch (e) {
-      if (!provider.isRetryableAbort(e) || attempt === 3) throw e;
-      await sleep(20 * attempt);
+    } catch (error) {
+      if (!provider.isRetryableAbort(error) || attempt === MAX_ATTEMPTS) throw error;
+      await sleep(RETRY_BACKOFF_MS * attempt);
     }
   }
+}
+
+/** Returns `existing` as a duplicate receipt, or throws if it stores a different input. */
+function duplicateOf(existing: Received, hash: Sha256): { duplicate: true; item: Received } {
+  if (existing.hash !== hash) throw new RequestConflict();
+
+  return { duplicate: true, item: existing };
 }
 
 export class SqlAuthority implements Authority {
@@ -69,7 +103,7 @@ export class SqlAuthority implements Authority {
       request,
     ]);
 
-    return rows[0] ? item(rows[0]) : undefined;
+    return rows[0] ? parseReceivedRow(rows[0]) : undefined;
   }
 
   async receive(
@@ -77,39 +111,44 @@ export class SqlAuthority implements Authority {
     request: RequestId,
     accepted: AcceptedInput,
   ): Promise<{ duplicate: boolean; item: Received }> {
-    // Snapshot only the scalar receipt fields before the first await, then validate them.
-    const hash = accepted.hash,
-      payload = accepted.payload,
-      kind = payload.kind,
-      json = payload.json;
+    // Read each caller-owned field once, before the first await, then validate those values.
+    const hashValue = accepted.hash;
+    const payload = accepted.payload;
+    const kind = payload.kind;
+    const jsonValue = payload.json;
 
     check(kind === "inline", "Inbox payload coherence");
-    item({ ns, request_id: request, payload_sha256: hash, json, received_at: 0 });
+    const { hash, json } = verifyInlinePayload(hashValue, jsonValue);
+    // Branded IDs can be forged with a cast, so validate them before any SQL.
+    harnessId(ns);
+    requestId(request);
 
-    return repeatable(this.provider, async () => {
-      let existing = await this.get(ns, request);
+    // Each attempt reads first, so a retry observes a receipt stored by another request.
+    return retryConfirmedAborts(this.provider, async () => {
+      const existing = await this.get(ns, request);
 
-      if (!existing) {
-        try {
-          const rows = await this.db.query(
-            `INSERT INTO inbox(ns,request_id,payload_sha256,json,received_at)
-             VALUES($1,$2,$3,$4,${DB_NOW_MS}) RETURNING *`,
-            [ns, request, hash, json],
-          );
+      if (existing) return duplicateOf(existing, hash);
 
-          check(rows[0], "Inbox insert missing result");
+      try {
+        const rows = await this.db.query(
+          `INSERT INTO inbox(ns,request_id,payload_sha256,json,received_at)
+           VALUES($1,$2,$3,$4,${DB_NOW_MS}) RETURNING *`,
+          [ns, request, hash, json],
+        );
 
-          return { duplicate: false, item: item(rows[0]) };
-        } catch (error) {
-          if (errorCode(error) !== "23505") throw error;
-          existing = await this.get(ns, request);
-          if (!existing) throw error;
-        }
+        check(rows[0], "Inbox insert missing result");
+
+        return { duplicate: false, item: parseReceivedRow(rows[0]) };
+      } catch (error) {
+        if (errorCode(error) !== UNIQUE_VIOLATION) throw error;
+
+        // A concurrent request stored first. Its receipt decides the outcome.
+        const winner = await this.get(ns, request);
+
+        if (!winner) throw error;
+
+        return duplicateOf(winner, hash);
       }
-
-      if (existing.hash !== hash) throw new RequestConflict();
-
-      return { duplicate: true, item: existing };
     });
   }
 }

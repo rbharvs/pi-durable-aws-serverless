@@ -2,11 +2,11 @@ import { expect, it } from "vitest";
 import { apiHandler } from "../../src/submit.ts";
 import { namespace, traced, type Query } from "./postgres.ts";
 
-it("acceptance needs no namespace state or redundant API read", async () => {
-  const f = await namespace("statements"),
-    trace: Query[] = [];
+it("a new request uses one read and one insert; a duplicate or conflict uses one read", async () => {
+  const store = await namespace("statements");
+  const trace: Query[] = [];
   const run = apiHandler({
-    connectAuthority: async () => (await traced(async () => {}, trace)).control,
+    connectAuthority: async () => (await traced(async () => {}, trace)).authority,
     dispatch: { wake: async () => {} },
     event: () => {},
   });
@@ -24,7 +24,7 @@ it("acceptance needs no namespace state or redundant API read", async () => {
       trace.length = 0;
       outcomes.push(
         await run({
-          ns: f.ns,
+          ns: store.ns,
           request,
           command: { kind: "inline", input: { content, whenBusy: "followUp" } },
         }),
@@ -41,6 +41,6 @@ it("acceptance needs no namespace state or redundant API read", async () => {
     expect(counts).toEqual([2, 2, 1, 1]);
     console.log("SQL new namespace/new request/duplicate/conflict:", counts);
   } finally {
-    await f.finish();
+    await store.finish();
   }
 });

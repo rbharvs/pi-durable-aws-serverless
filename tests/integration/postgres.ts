@@ -3,7 +3,7 @@ import type pg from "pg";
 import { Database, type Row, type SqlValue } from "../../src/sql/db.ts";
 import { harnessId } from "../../src/domain.ts";
 import { configuredProvider } from "./config.ts";
-import { Control } from "./authority.ts";
+import { InspectableAuthority } from "./authority.ts";
 
 export const provider = configuredProvider();
 
@@ -53,10 +53,16 @@ export function wrap(client: pg.Client, hook: QueryHook, trace: Query[] = []): p
   });
 }
 
-export const abort = () => Object.assign(new Error("confirmed statement abort"), { code: "40001" });
+/** A serialization failure (SQLSTATE 40001), which the provider confirms committed nothing. */
+export const confirmedAbort = () =>
+  Object.assign(new Error("confirmed statement abort"), { code: "40001" });
 
 /** Fires one injected fault at the first matching statement boundary. */
-export function once(phase: "before" | "after", prefix: string, fault: () => unknown): QueryHook {
+export function faultOnce(
+  phase: "before" | "after",
+  prefix: string,
+  fault: () => unknown,
+): QueryHook {
   let fired = false;
 
   return async (at, sql) => {
@@ -69,31 +75,34 @@ export function once(phase: "before" | "after", prefix: string, fault: () => unk
 
 /** An authority over its own traced connection; the hook can inject faults at statement boundaries. */
 export async function traced(hook: QueryHook = async () => {}, trace: Query[] = []) {
-  const control = new Control(new Database(wrap(await provider.connect(), hook, trace)), provider);
+  const authority = new InspectableAuthority(
+    new Database(wrap(await provider.connect(), hook, trace)),
+    provider,
+  );
 
-  return { control, trace };
+  return { authority, trace };
 }
 
-/** An isolated receipt namespace. */
+/** An isolated receipt namespace with its own authority; `finish()` deletes its rows and closes it. */
 export async function namespace(label: string) {
-  const ns = harnessId(`test_${label}_${randomUUID().replaceAll("-", "")}`),
-    control = new Control(await Database.connect(provider), provider);
+  const ns = harnessId(`test_${label}_${randomUUID().replaceAll("-", "")}`);
+  const authority = new InspectableAuthority(await Database.connect(provider), provider);
 
   return {
     ns,
-    control,
+    authority,
 
     async inbox(): Promise<Row[]> {
-      return control.inspectionDb.query("SELECT * FROM inbox WHERE ns=$1 ORDER BY request_id", [
+      return authority.inspectionDb.query("SELECT * FROM inbox WHERE ns=$1 ORDER BY request_id", [
         ns,
       ]);
     },
 
     async finish() {
       try {
-        await control.inspectionDb.query("DELETE FROM inbox WHERE starts_with(ns, $1)", [ns]);
+        await authority.inspectionDb.query("DELETE FROM inbox WHERE starts_with(ns, $1)", [ns]);
       } finally {
-        await control.close();
+        await authority.close();
       }
     },
   };

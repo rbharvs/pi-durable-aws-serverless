@@ -6,13 +6,14 @@ import {
   MAX_BLOCKS,
   MAX_IMAGES,
 } from "./input.ts";
-import { changing } from "../tests/shared/input.ts";
+import { withChangingProperty } from "../tests/shared/input.ts";
 
 const plain = { content: "hello", whenBusy: "followUp" as const };
 
 const image = { type: "image", data: "AQID", mimeType: "image/png" };
 
-const inline = (input: unknown) => ({ kind: "inline", input });
+/** Builds the wire command for an inline Pi input. */
+const inlineCommand = (input: unknown) => ({ kind: "inline", input });
 
 describe("canonical Pi input boundary", () => {
   it("preserves supported textSignature rather than silently dropping or rejecting it", () => {
@@ -59,18 +60,39 @@ describe("canonical Pi input boundary", () => {
       }).sha256,
     );
   });
-  for (const [name, value] of [
-    ["reject", { ...plain, whenBusy: "reject" }],
-    ["unknown top-level", { ...plain, entry: {} }],
-    ["unknown block field", { ...plain, content: [{ type: "text", text: "a", other: true }] }],
+  for (const [name, value, message] of [
+    ['whenBusy "reject"', { ...plain, whenBusy: "reject" }, "Invalid whenBusy"],
+    ["an unknown top-level field", { ...plain, entry: {} }, "Unexpected input field"],
     [
-      "wrong signature type",
-      { ...plain, content: [{ type: "text", text: "a", textSignature: 1 }] },
+      "an unknown block field",
+      { ...plain, content: [{ type: "text", text: "a", other: true }] },
+      "Unexpected input field",
     ],
-    ["MIME", { ...plain, content: [{ ...image, mimeType: "text/plain" }] }],
-    ["base64 whitespace", { ...plain, content: [{ ...image, data: "AQ ID" }] }],
-    ["base64 bad bits", { ...plain, content: [{ ...image, data: "AR==" }] }],
-    ["base64 padding", { ...plain, content: [{ ...image, data: "AQI" }] }],
+    [
+      "a non-string textSignature",
+      { ...plain, content: [{ type: "text", text: "a", textSignature: 1 }] },
+      "Expected string",
+    ],
+    [
+      "an unsupported image MIME type",
+      { ...plain, content: [{ ...image, mimeType: "text/plain" }] },
+      "Unsupported image MIME type",
+    ],
+    [
+      "base64 with whitespace",
+      { ...plain, content: [{ ...image, data: "AQ ID" }] },
+      "Invalid canonical base64 image",
+    ],
+    [
+      "base64 with nonzero padding bits",
+      { ...plain, content: [{ ...image, data: "AR==" }] },
+      "Invalid canonical base64 image",
+    ],
+    [
+      "base64 without padding",
+      { ...plain, content: [{ ...image, data: "AQI" }] },
+      "Invalid canonical base64 image",
+    ],
     [
       "too many blocks",
       {
@@ -80,6 +102,7 @@ describe("canonical Pi input boundary", () => {
           text: "",
         })),
       },
+      "Invalid or too many content blocks",
     ],
     [
       "too many images",
@@ -87,53 +110,67 @@ describe("canonical Pi input boundary", () => {
         ...plain,
         content: Array.from({ length: MAX_IMAGES + 1 }, () => image),
       },
+      "Too many images",
     ],
   ] as const)
-    it(`rejects ${name}`, () => expect(() => canonical(value)).toThrow());
+    it(`rejects ${name}`, () => expect(() => canonical(value)).toThrow(message));
   it("validates and stores only the first value read from each input property", () => {
     const later = [{ type: "text", text: "later" }];
 
-    expect(canonical(changing({ whenBusy: "followUp" }, "content", "x", later)).json).toBe(
-      '{"content":"x","whenBusy":"followUp"}',
-    );
-    expect(canonical(changing({ content: "x" }, "whenBusy", "followUp", "reject")).json).toBe(
-      '{"content":"x","whenBusy":"followUp"}',
-    );
+    expect(
+      canonical(withChangingProperty({ whenBusy: "followUp" }, "content", { first: "x", later }))
+        .json,
+    ).toBe('{"content":"x","whenBusy":"followUp"}');
+    expect(
+      canonical(
+        withChangingProperty({ content: "x" }, "whenBusy", { first: "followUp", later: "reject" }),
+      ).json,
+    ).toBe('{"content":"x","whenBusy":"followUp"}');
     expect(
       canonical({
         ...plain,
-        content: [changing({ type: "text", text: "a" }, "textSignature", "first", "later")],
+        content: [
+          withChangingProperty({ type: "text", text: "a" }, "textSignature", {
+            first: "first",
+            later: "later",
+          }),
+        ],
       }).json,
     ).toBe(
       '{"content":[{"type":"text","text":"a","textSignature":"first"}],"whenBusy":"followUp"}',
     );
     expect(
-      canonical({ ...plain, content: [changing({ ...image }, "type", "image", "text")] }).json,
+      canonical({
+        ...plain,
+        content: [withChangingProperty({ ...image }, "type", { first: "image", later: "text" })],
+      }).json,
     ).toBe(
       '{"content":[{"type":"image","data":"AQID","mimeType":"image/png"}],"whenBusy":"followUp"}',
     );
   });
   it("accepts empty Pi inputs with distinct canonical identities", () => {
-    const text = canonical({ ...plain, content: "" }),
-      blocks = canonical({ ...plain, content: [] });
+    const text = canonical({ ...plain, content: "" });
+    const blocks = canonical({ ...plain, content: [] });
 
     expect(text.json).toBe('{"content":"","whenBusy":"followUp"}');
     expect(blocks.json).toBe('{"content":[],"whenBusy":"followUp"}');
     expect(text.sha256).not.toBe(blocks.sha256);
   });
   it("enforces the inline cap on canonical UTF-8 bytes and accepts only the inline transport", () => {
-    const envelope = Buffer.byteLength(JSON.stringify({ ...plain, content: "" })),
-      largest = "x".repeat(MAX_INLINE_INPUT_BYTES - envelope);
+    const envelope = Buffer.byteLength(JSON.stringify({ ...plain, content: "" }));
+    const largest = "x".repeat(MAX_INLINE_INPUT_BYTES - envelope);
 
-    expect(parseCommand(inline({ ...plain, content: largest })).input.content).toBe(largest);
+    expect(parseCommand(inlineCommand({ ...plain, content: largest })).input.content).toBe(largest);
     // Same character count, one more UTF-8 byte.
-    expect(() => parseCommand(inline({ ...plain, content: largest.slice(1) + "é" }))).toThrow(
-      "Inline input exceeds 256 KiB",
-    );
     expect(() =>
-      parseCommand(inline({ ...plain, content: "x".repeat(MAX_INLINE_INPUT_BYTES) })),
+      parseCommand(inlineCommand({ ...plain, content: largest.slice(1) + "é" })),
     ).toThrow("Inline input exceeds 256 KiB");
-    expect(() => parseCommand({ ...inline(plain), extra: true })).toThrow("Unexpected input field");
+    expect(() =>
+      parseCommand(inlineCommand({ ...plain, content: "x".repeat(MAX_INLINE_INPUT_BYTES) })),
+    ).toThrow("Inline input exceeds 256 KiB");
+    expect(() => parseCommand({ ...inlineCommand(plain), extra: true })).toThrow(
+      "Unexpected input field",
+    );
     expect(() =>
       parseCommand({
         kind: "s3",
@@ -142,7 +179,7 @@ describe("canonical Pi input boundary", () => {
         bytes: 2,
       }),
     ).toThrow("Invalid command kind");
-    expect(() => parseCommand(inline({ ...plain, whenBusy: "reject" }))).toThrow(
+    expect(() => parseCommand(inlineCommand({ ...plain, whenBusy: "reject" }))).toThrow(
       "Invalid whenBusy",
     );
   });

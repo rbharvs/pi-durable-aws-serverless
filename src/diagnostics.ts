@@ -1,22 +1,23 @@
 import type { Events } from "./dispatch.ts";
 
-/** Diagnostics are never authority or lifecycle controls. */
+/** Sends a diagnostic event and ignores observer failures, so an observer cannot change an outcome. */
 export function emit(event: Events, name: string, fields: Record<string, unknown>): void {
   try {
     event(name, fields);
   } catch {
-    /* observer failure cannot change an outcome */
+    // Observer failures are deliberately ignored.
   }
 }
 
+/** Closes `resource` and reports a failure as a `cleanup-failed` event instead of throwing. */
 export async function cleanup(
-  close: () => void | Promise<void>,
+  resource: { close(): void | Promise<void> },
   event: Events,
-  resource: string,
+  name: string,
 ): Promise<void> {
   try {
-    await close();
+    await resource.close();
   } catch {
-    emit(event, "cleanup-failed", { resource });
+    emit(event, "cleanup-failed", { resource: name });
   }
 }

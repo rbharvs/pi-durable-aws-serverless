@@ -3,7 +3,8 @@ import { SqlAuthority } from "../../src/sql/authority.ts";
 import type { Database } from "../../src/sql/db.ts";
 import type { SqlProvider } from "../../src/sql/connection.ts";
 
-export class Control extends SqlAuthority {
+/** An `SqlAuthority` whose database handle tests may query directly. */
+export class InspectableAuthority extends SqlAuthority {
   constructor(
     readonly inspectionDb: Database,
     provider: SqlProvider,
