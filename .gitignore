@@ -1,0 +1,10 @@
+node_modules/
+dist/
+.test-output/
+.vitest/
+coverage/
+*.tsbuildinfo
+.env
+.env.*
+.DS_Store
+result
