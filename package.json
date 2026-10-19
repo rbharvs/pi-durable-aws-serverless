@@ -1,0 +1,19 @@
+{
+  "name": "pi-durable-aws-serverless",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "check": "oxfmt --check .",
+    "format": "oxfmt ."
+  },
+  "devDependencies": {
+    "@types/node": "22.19.1",
+    "oxfmt": "0.68.0",
+    "oxlint": "1.86.0",
+    "typescript": "6.0.2"
+  },
+  "engines": {
+    "node": "22.x"
+  },
+  "packageManager": "pnpm@10.34.5"
+}
