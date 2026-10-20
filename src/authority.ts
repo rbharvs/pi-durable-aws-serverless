@@ -21,7 +21,7 @@ export type Received = {
   /** SHA-256 of the canonical JSON in `payload`. */
   readonly hash: Sha256;
   readonly payload: StoredPayload;
-  /** Unix epoch milliseconds from the database clock, fixed when the receipt was first stored. */
+  /** Unix epoch milliseconds from the authority clock, fixed when the receipt was first stored. */
   readonly receivedAt: number;
 };
 
@@ -33,7 +33,7 @@ export type Admitted = Omit<Received, "kind"> & {
 
 export type InboxItem = Received | Admitted;
 
-/** Durable receipt storage. Each method is one atomic operation. */
+/** Receipt storage. Each method is atomic; backing lifetime is adapter-specific. */
 export interface Authority {
   get(ns: HarnessId, request: RequestId): Promise<InboxItem | undefined>;
   /**
@@ -55,7 +55,7 @@ export interface Authority {
   /** One authoritative snapshot of unmapped receipts and live task/submission records. */
   hasWork(ns: HarnessId): Promise<boolean>;
   /**
-   * At most five Harness IDs with authoritative work and a strictly expired lease by database time.
+   * At most five Harness IDs with authoritative work and a strictly expired lease by authority time.
    * Ordered by lease expiry, then Harness ID. Advisory only: discovery does not claim ownership.
    */
   eligible(): Promise<HarnessId[]>;
@@ -69,7 +69,7 @@ export type WorkerAuthority = Pick<
   "claim" | "received" | "markAdmitted" | "hasWork" | "release" | "close"
 >;
 
-/** Pairing of one authority schema and its fenced native Storage. */
+/** Pairing of one authority store and its fenced native Storage. */
 export interface Backend {
   connectAuthority(): Promise<Authority>;
   /** Returned Storage.close must tolerate repeated calls, including after failed Harness.open. */

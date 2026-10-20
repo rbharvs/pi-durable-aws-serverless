@@ -7,7 +7,7 @@ import {
   type HarnessId,
   type Sha256,
 } from "./domain.ts";
-import { MAX_INPUT_BYTES, MAX_INLINE_INPUT_BYTES } from "./input.ts";
+import { canonical, MAX_INPUT_BYTES, MAX_INLINE_INPUT_BYTES } from "./input.ts";
 import { LIMITS } from "./limits.ts";
 
 export class EnvelopeRejected extends Error {}
@@ -40,6 +40,26 @@ export type PublishedPayload = {
 };
 
 export type StoredPayload = { readonly kind: "inline"; readonly json: string } | PublishedPayload;
+
+/**
+ * Checks that `json` is canonical Pi input within the inline cap and that `hash` is its SHA-256.
+ * The byte cap is checked before parsing.
+ */
+export function verifyInlinePayload(
+  hashValue: unknown,
+  jsonValue: unknown,
+): { hash: Sha256; json: string } {
+  const hash = parseSha256(hashValue);
+  const json = text(jsonValue);
+
+  check(Buffer.byteLength(json) <= MAX_INLINE_INPUT_BYTES, "Inbox payload integrity");
+
+  const reparsed = canonical(JSON.parse(json));
+
+  check(reparsed.json === json && reparsed.sha256 === hash, "Inbox payload integrity");
+
+  return { hash, json };
+}
 
 /** Validates metadata, not object existence or durability. The publisher guarantees those. */
 export function publishedPayload(ns: HarnessId, value: unknown): PublishedPayload {

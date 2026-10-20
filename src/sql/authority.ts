@@ -12,16 +12,14 @@ import {
   parseSha256,
   requestId,
   sleep,
-  text,
   type HarnessId,
   type RequestId,
   type Sha256,
 } from "../domain.ts";
 import { type SqlProvider } from "./connection.ts";
 import { RequestConflict } from "../faults.ts";
-import { canonical, MAX_INLINE_INPUT_BYTES } from "../input.ts";
 import { type AcceptedInput, type Authority, type Received, type InboxItem } from "../authority.ts";
-import { publishedPayload, type StoredPayload } from "../payload.ts";
+import { publishedPayload, verifyInlinePayload, type StoredPayload } from "../payload.ts";
 import { issueLease, LEASE_MARGIN_MS, type Claim, type Lease } from "../lease.ts";
 
 /** SQL expression for the database clock in Unix epoch milliseconds. */
@@ -57,26 +55,6 @@ const WORK = `
   EXISTS (SELECT 1 FROM inbox i WHERE i.ns=h.ns AND i.submission_id IS NULL)
   OR EXISTS (SELECT 1 FROM records r WHERE r.ns=h.ns AND r.type='task' AND r.status IN ('pending','running','waiting','completing'))
   OR EXISTS (SELECT 1 FROM records r WHERE r.ns=h.ns AND r.type='submission' AND r.status IN ('queued','placed'))`;
-
-/**
- * Checks that `json` is canonical Pi input within the inline cap and that `hash` is its SHA-256.
- * The byte cap is checked before parsing.
- */
-function verifyInlinePayload(
-  hashValue: unknown,
-  jsonValue: unknown,
-): { hash: Sha256; json: string } {
-  const hash = parseSha256(hashValue);
-  const json = text(jsonValue);
-
-  check(Buffer.byteLength(json) <= MAX_INLINE_INPUT_BYTES, "Inbox payload integrity");
-
-  const reparsed = canonical(JSON.parse(json));
-
-  check(reparsed.json === json && reparsed.sha256 === hash, "Inbox payload integrity");
-
-  return { hash, json };
-}
 
 /** Converts a stored row to a receipt and rejects rows whose payload fails verification. */
 function parseInboxRow(row: Row): InboxItem {
