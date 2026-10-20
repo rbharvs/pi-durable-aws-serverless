@@ -69,16 +69,18 @@ export async function workerFixture(label: string, hold = false, hook: QueryHook
     rootAgent: { model: { provider: "faux", modelId: "faux-1" } },
   };
   const deps = runtimeDependencies(options);
-  const api = apiHandler({
-    connectAuthority: () => backend.connectAuthority(),
-    objects: objects.objects,
-    event: options.event,
-    dispatch: {
-      wake: async (ns) => {
-        hints.push(ns);
-      },
+  const dispatch = {
+    wake: async (ns: HarnessId) => {
+      hints.push(ns);
     },
-  });
+  };
+  const reconcileDeps = {
+    connectAuthority: () => backend.connectAuthority(),
+    event: options.event,
+    dispatch,
+  };
+  const apiDeps = { ...reconcileDeps, objects: objects.objects };
+  const api = apiHandler(apiDeps);
   return {
     ...f,
     objects,
@@ -89,6 +91,9 @@ export async function workerFixture(label: string, hold = false, hook: QueryHook
     backend,
     options,
     deps,
+    dispatch,
+    reconcileDeps,
+    apiDeps,
     api,
     run: () => {
       const deadline = Date.now() + 45000;

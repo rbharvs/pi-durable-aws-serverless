@@ -235,6 +235,14 @@ export class SqlAuthority implements Authority {
     return rows[0].work;
   }
 
+  async eligible(): Promise<HarnessId[]> {
+    const rows = await this.db.query(
+      `SELECT h.ns FROM harness h WHERE h.lease_until < ${DB_NOW_MS} AND (${WORK})
+       ORDER BY h.lease_until,h.ns LIMIT 5`,
+    );
+    return rows.map((row) => harnessId(row.ns));
+  }
+
   close(): Promise<void> {
     return this.db.end();
   }

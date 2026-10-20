@@ -5,6 +5,8 @@ import type {
   SubmitResponse,
   CommandObjects,
   WorkerAuthority,
+  ReconcilerAuthority,
+  ReconcilerDependencies,
   WorkerDependencies,
   WorkerResult,
   RuntimeOptions,
@@ -19,9 +21,24 @@ type Equal<A, B> =
 export type AuthorityKeys = Assert<
   Equal<
     keyof Authority,
-    "get" | "receive" | "claim" | "release" | "received" | "markAdmitted" | "hasWork" | "close"
+    | "get"
+    | "receive"
+    | "claim"
+    | "release"
+    | "received"
+    | "markAdmitted"
+    | "hasWork"
+    | "eligible"
+    | "close"
   >
 >;
+export type ReconcilerAuthorityKeys = Assert<
+  Equal<keyof ReconcilerAuthority, "eligible" | "close">
+>;
+export type ReconcilerDependencyKeys = Assert<
+  Equal<keyof ReconcilerDependencies, "connectAuthority" | "dispatch" | "event">
+>;
+
 export type ApiAuthorityKeys = Assert<Equal<keyof ApiAuthority, "get" | "receive" | "close">>;
 
 export type ApiDependencyKeys = Assert<

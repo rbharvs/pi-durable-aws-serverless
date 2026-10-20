@@ -168,8 +168,13 @@ it("observes receipts, every live task state and queued/placed submissions in on
     expect(await observer.authority.hasWork(f.ns)).toBe(expected);
     expect(observer.trace).toHaveLength(1);
     expect(observer.trace[0]!.acknowledged).toBe(true);
+    observer.trace.length = 0;
+    expect((await observer.authority.eligible()).includes(f.ns)).toBe(expected);
+    expect(observer.trace).toHaveLength(1);
+    expect(observer.trace[0]!.acknowledged).toBe(true);
   };
   try {
+    await f.control.query("UPDATE harness SET lease_until=0 WHERE ns=$1", [f.ns]);
     await work(true); // only the real fixture receipt
     const received = await fixtureReceipt(f);
     const done = {
