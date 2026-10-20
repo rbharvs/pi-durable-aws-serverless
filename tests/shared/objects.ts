@@ -1,11 +1,11 @@
 import { Readable } from "node:stream";
+import { objectSize, reference, type PayloadObjects } from "../../src/s3-payload.ts";
 import { check, computeSha256, type HarnessId } from "../../src/domain.ts";
 import {
   stagedReference,
   type StagedReference,
   ObjectInvalid,
   type CommandObjects,
-  publishedPayload,
 } from "../../src/index.ts";
 
 /**
@@ -55,12 +55,26 @@ export function objectFixture() {
 
     openHandles: () => openHandles,
 
-    objects(ns: HarnessId): CommandObjects {
+    objects(ns: HarnessId): CommandObjects & PayloadObjects {
       let closed = false;
 
       openHandles++;
 
       return {
+        async get(input) {
+          check(!closed, "Objects are closed");
+          const ref = reference(
+            { object_key: input.key, sha256: input.sha256, bytes: input.bytes },
+            ns,
+          );
+          const bytes = published.get(ref.key);
+          check(
+            bytes && bytes.length === ref.bytes && computeSha256(bytes) === ref.sha256,
+            "Published object missing or corrupt",
+          );
+          return new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes);
+        },
+
         async getStaged(input) {
           check(!closed, "Objects are closed");
           const ref = stagedReference(ns, input);
@@ -74,12 +88,14 @@ export function objectFixture() {
         async put(json) {
           check(!closed, "Objects are closed");
           const bytes = Buffer.from(json);
-          const ref = publishedPayload(ns, {
-            kind: "s3",
-            key: `p/${ns}/${name()}`,
-            sha256: computeSha256(bytes),
-            bytes: bytes.length,
-          });
+          const ref = reference(
+            {
+              object_key: `p/${ns}/${name()}`,
+              sha256: computeSha256(bytes),
+              bytes: objectSize(json),
+            },
+            ns,
+          );
 
           check(!published.has(ref.key), "Create-only publication collision");
           published.set(ref.key, bytes);

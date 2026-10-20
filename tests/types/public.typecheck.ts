@@ -4,6 +4,11 @@ import type {
   ApiDependencies,
   SubmitResponse,
   CommandObjects,
+  WorkerAuthority,
+  WorkerDependencies,
+  WorkerResult,
+  RuntimeOptions,
+  Lease,
 } from "../../src/index.ts";
 
 type Assert<T extends true> = T;
@@ -22,6 +27,21 @@ export type ApiAuthorityKeys = Assert<Equal<keyof ApiAuthority, "get" | "receive
 export type ApiDependencyKeys = Assert<
   Equal<keyof ApiDependencies, "connectAuthority" | "objects" | "dispatch" | "event" | "report">
 >;
+
+export type WorkerAuthorityKeys = Assert<
+  Equal<
+    keyof WorkerAuthority,
+    "claim" | "release" | "received" | "markAdmitted" | "hasWork" | "close"
+  >
+>;
+export type WorkerDependencyKeys = Assert<
+  Equal<keyof WorkerDependencies, "connectAuthority" | "open" | "resolve" | "event">
+>;
+export type WorkerOutcomes = Assert<Equal<WorkerResult, "held" | "idle" | "released" | "lost">>;
+export type RuntimeReaderKeys = Assert<
+  Equal<keyof ReturnType<RuntimeOptions["objects"]>, "get" | "close">
+>;
+export type WorkerOpenLease = Assert<Equal<Parameters<WorkerDependencies["open"]>[0], Lease>>;
 
 export type ObjectCapabilityKeys = Assert<
   Equal<keyof CommandObjects, "getStaged" | "put" | "close">

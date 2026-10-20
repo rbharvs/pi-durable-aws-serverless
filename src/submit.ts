@@ -1,4 +1,4 @@
-import { type AcceptedInput, type ApiAuthority } from "./authority.ts";
+import { type AcceptedInput, type ApiAuthority, type Received } from "./authority.ts";
 import { RequestConflict, StagedContentInvalid, Unavailable, InvalidInput } from "./faults.ts";
 import {
   check,
@@ -12,6 +12,8 @@ import {
 import {
   canonicalStagedInput,
   MAX_INLINE_INPUT_BYTES,
+  MAX_INPUT_BYTES,
+  type AgentInput,
   prepareCommand,
   type CanonicalInput,
   type PreparedCommand,
@@ -20,6 +22,24 @@ import { publishedPayload, type StoredPayload } from "./payload.ts";
 import { ObjectInvalid, readAtMost, type CommandObjects } from "./object-data.ts";
 import { type Dispatch, type Events } from "./dispatch.ts";
 import { emit, cleanup } from "./diagnostics.ts";
+import type { PayloadObjects } from "./s3-payload.ts";
+
+/** Reads only durable receipt bytes, never the caller's mutable staging object. */
+export async function resolveInput(
+  item: Received,
+  objects: Pick<PayloadObjects, "get">,
+): Promise<AgentInput> {
+  const payload =
+    item.payload.kind === "s3" ? publishedPayload(item.ns, item.payload) : item.payload;
+  const json = payload.kind === "inline" ? payload.json : await objects.get(payload);
+  const bytes = Buffer.byteLength(json);
+  check(bytes <= MAX_INPUT_BYTES, "Inbox input exceeds bounded size");
+  const input = canonicalStagedInput(Buffer.from(json));
+  check(input.json === json && input.sha256 === item.hash, "Inbox payload integrity");
+  if (payload.kind === "s3")
+    check(bytes === payload.bytes && input.sha256 === payload.sha256, "Inbox object integrity");
+  return input.input;
+}
 
 export type SubmitResponse =
   | {
