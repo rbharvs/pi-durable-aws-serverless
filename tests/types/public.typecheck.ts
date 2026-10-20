@@ -12,7 +12,10 @@ type Equal<A, B> =
   (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2 ? true : false;
 
 export type AuthorityKeys = Assert<
-  Equal<keyof Authority, "get" | "receive" | "received" | "markAdmitted" | "hasWork" | "close">
+  Equal<
+    keyof Authority,
+    "get" | "receive" | "claim" | "release" | "received" | "markAdmitted" | "hasWork" | "close"
+  >
 >;
 export type ApiAuthorityKeys = Assert<Equal<keyof ApiAuthority, "get" | "receive" | "close">>;
 

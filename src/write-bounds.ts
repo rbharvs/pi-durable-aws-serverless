@@ -2,14 +2,8 @@ import type { StorageWrite } from "@earendil-works/pi-durable";
 import { LIMITS } from "./limits.ts";
 import { EnvelopeRejected } from "./payload.ts";
 
-/** Only implemented native records. Not a complete Pi Storage. */
-export type HistoryWrite = Extract<
-  StorageWrite,
-  { type: "conversation" | "entry" | "task" | "submission" }
->;
-
 /** Detach at invocation; validation, indexes and payloads all use this same JSON value. */
-export function freezeWrites(writes: readonly HistoryWrite[]): readonly HistoryWrite[] {
+export function freezeWrites(writes: readonly StorageWrite[]): readonly StorageWrite[] {
   if (writes.length + 1 > LIMITS.maxRows)
     throw new EnvelopeRejected("Atomic envelope exceeded: write count");
 
@@ -24,8 +18,22 @@ export function freezeWrites(writes: readonly HistoryWrite[]): readonly HistoryW
   return JSON.parse(json);
 }
 
-export function storedHighWater(writes: readonly HistoryWrite[]): number {
+/** The stored record or document ID that one write creates or changes. */
+export function writeId(write: StorageWrite): number {
+  switch (write.type) {
+    case "document.create":
+    case "document.copy":
+      return write.record.id;
+    case "document.change":
+    case "document.retire":
+      return write.id;
+    default:
+      return write.value.id;
+  }
+}
+
+export function storedHighWater(writes: readonly StorageWrite[]): number {
   let next = 2;
-  for (const write of writes) next = Math.max(next, write.value.id + 1);
+  for (const write of writes) next = Math.max(next, writeId(write) + 1);
   return next;
 }

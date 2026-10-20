@@ -99,6 +99,16 @@ export async function historyConnection(hook: QueryHook = async () => {}) {
   return { db, trace, endCalls: () => ends };
 }
 
+/** Every table holding namespace rows, in dependency-safe deletion order. */
+export const OWNED_TABLES = [
+  "inbox",
+  "records",
+  "revisions",
+  "inline_payloads",
+  "s3_payloads",
+  "harness",
+] as const;
+
 /** An isolated namespace with its own authority; `finish()` deletes its rows and closes it. */
 export async function namespace(label: string) {
   const ns = harnessId(`test_${label}_${randomUUID().replaceAll("-", "")}`);
@@ -117,7 +127,7 @@ export async function namespace(label: string) {
     async finish() {
       try {
         // Fixed table names and the full random namespace prefix: never clean another test's rows.
-        for (const table of ["inbox", "records", "inline_payloads", "s3_payloads", "harness"])
+        for (const table of OWNED_TABLES)
           await authority.inspectionDb.query(`DELETE FROM ${table} WHERE starts_with(ns, $1)`, [
             ns,
           ]);

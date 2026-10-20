@@ -3,8 +3,9 @@ import { errorCode, harnessId, requestId } from "../../src/domain.ts";
 import { DB_NOW_MS } from "../../src/sql/authority.ts";
 import { BEGIN_READ, BEGIN_WRITE, Database } from "../../src/sql/db.ts";
 import { acceptedInput } from "../shared/input.ts";
+import { documentCreate } from "./document-support.ts";
 import { InspectableAuthority } from "./authority.ts";
-import { confirmedAbort, provider, statements, type Query } from "./postgres.ts";
+import { OWNED_TABLES, confirmedAbort, provider, statements, type Query } from "./postgres.ts";
 import {
   context,
   conversation,
@@ -561,7 +562,13 @@ it("fixture teardown joins close failures and both SQL leak checks, and deletes 
   let ownerAtCleanup: unknown;
 
   try {
-    await f.storage.commit([conversation(), dataEntry(20, "x".repeat(300 * 1024))], context);
+    await f.storage.commit(
+      [conversation(), dataEntry(20, "x".repeat(300 * 1024)), documentCreate(30)],
+      context,
+    );
+    expect(
+      await f.control.query("SELECT document_id FROM revisions WHERE ns=$1", [f.ns]),
+    ).toHaveLength(1);
     const second = await f.open();
     const third = await f.open();
 
@@ -602,8 +609,10 @@ it("fixture teardown joins close failures and both SQL leak checks, and deletes 
     const observer = await Database.connect(provider);
 
     try {
-      for (const table of ["inbox", "records", "inline_payloads", "s3_payloads", "harness"])
+      for (const table of OWNED_TABLES)
         expect(await observer.query(`SELECT * FROM ${table} WHERE ns=$1`, [f.ns])).toEqual([]);
+      // Independent of OWNED_TABLES: an omitted revision table must still fail cleanup.
+      expect(await observer.query("SELECT * FROM revisions WHERE ns=$1", [f.ns])).toEqual([]);
     } finally {
       await observer.end();
     }

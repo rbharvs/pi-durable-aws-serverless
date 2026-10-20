@@ -7,7 +7,7 @@ import {
   type TaskId,
 } from "@earendil-works/pi-durable";
 import { idFromNumber } from "../../src/ids.ts";
-import type { HistoryWrite } from "../../src/write-bounds.ts";
+import type { StorageWrite } from "@earendil-works/pi-durable";
 import { computeSha256, object } from "../../src/domain.ts";
 import { BEGIN_READ, BEGIN_WRITE } from "../../src/sql/db.ts";
 import {
@@ -219,7 +219,7 @@ for (const { name, write } of invalidWriteNumbers)
       const before = await f.snapshot();
       f.trace.length = 0;
       await expect(
-        f.storage.commit([dataEntry(20, "x".repeat(300 * 1024)), write as HistoryWrite], context),
+        f.storage.commit([dataEntry(20, "x".repeat(300 * 1024)), write as StorageWrite], context),
       ).rejects.toBeInstanceOf(StorageRequestError);
       expect(f.trace).toEqual([]);
       expect(f.memory.operations).toEqual([]);
@@ -349,7 +349,7 @@ for (const point of [0, Number.MAX_SAFE_INTEGER])
   it(`stores numeric head/fork point ${point} and reads it after reopen like public MemoryStorage`, async () => {
     const f = await historyFixture("metadata_points");
     const memory = new MemoryStorage();
-    const writes: HistoryWrite[] = [
+    const writes: StorageWrite[] = [
       conversation(),
       entry(10, { head: entryId(point) }),
       entry(20),
@@ -362,7 +362,10 @@ for (const point of [0, Number.MAX_SAFE_INTEGER])
       await f.storage.close(context);
       const reopened = await f.open();
       for (const store of [reopened.storage, memory]) {
-        expect(await store.conversation(conversationId(30), context)).toEqual(writes[3]!.value);
+        expect(await store.conversation(conversationId(30), context)).toEqual(
+          conversation(30, { parent: { conversationId: conversationId(1), at: entryId(point) } })
+            .value,
+        );
         const marker = await store.findLatestHeadMarker(conversationId(1), undefined, context);
         expect(marker?.head).toBe(point);
         const rootPage = await store.scanEntries(
@@ -393,7 +396,7 @@ for (const selector of [0, -5])
   it(`safe numeric selector ${selector} matches public MemoryStorage without a positive floor`, async () => {
     const f = await historyFixture("read_selectors");
     const memory = new MemoryStorage();
-    const writes: HistoryWrite[] = [
+    const writes: StorageWrite[] = [
       conversation(),
       entry(10),
       entry(20, { head: entryId(10) }),

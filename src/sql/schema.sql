@@ -11,6 +11,11 @@ CREATE TABLE records (
   address_hash text, scope_kind text, scope_owner bigint, created_at bigint, retired_at bigint,
   PRIMARY KEY(ns,id)
 );
+CREATE TABLE revisions (
+  ns text NOT NULL, document_id bigint NOT NULL, seq bigint NOT NULL,
+  kind text NOT NULL, version double precision NOT NULL, payload_kind text NOT NULL CHECK(payload_kind IN ('inline','s3')), payload_ref uuid NOT NULL,
+  PRIMARY KEY(ns,document_id,seq)
+);
 CREATE INDEX records_type ON records(ns,type,id);
 CREATE INDEX records_conversation ON records(ns,type,conversation_id,id);
 CREATE INDEX records_status ON records(ns,type,status,id);

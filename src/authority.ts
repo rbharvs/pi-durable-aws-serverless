@@ -1,5 +1,6 @@
-import type { SubmissionId } from "@earendil-works/pi-durable";
+import type { Storage, SubmissionId } from "@earendil-works/pi-durable";
 import type { HarnessId, RequestId, Sha256 } from "./domain.ts";
+import type { Lease, Claim } from "./lease.ts";
 import type { StoredPayload } from "./payload.ts";
 
 /**
@@ -45,6 +46,8 @@ export interface Authority {
     request: RequestId,
     accepted: AcceptedInput,
   ): Promise<{ duplicate: boolean; item: InboxItem }>;
+  claim(ns: HarnessId, remainingMs: number): Promise<Claim>;
+  release(lease: Lease): Promise<"released" | "lost">;
   /** At most eight unmapped receipts, oldest first. */
   received(ns: HarnessId): Promise<Received[]>;
   /** Maps a receipt to an existing submission; equal repeats are harmless, changes fail. */
@@ -53,6 +56,12 @@ export interface Authority {
   hasWork(ns: HarnessId): Promise<boolean>;
   /** Closes this handle. Stored receipts are unaffected. */
   close(): Promise<void>;
+}
+
+/** Internal pairing of one authority schema and its fenced native Storage. */
+export interface Backend {
+  connectAuthority(): Promise<Authority>;
+  openStorage(lease: Lease): Promise<Storage>;
 }
 
 /** Receipt-only consumers do not need native history capabilities. */

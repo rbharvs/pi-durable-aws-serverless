@@ -6,7 +6,7 @@ import {
   type TaskQuery,
 } from "@earendil-works/pi-durable";
 import { computeSha256 } from "../../src/domain.ts";
-import type { HistoryWrite } from "../../src/write-bounds.ts";
+import type { StorageWrite } from "@earendil-works/pi-durable";
 import { BEGIN_WRITE } from "../../src/sql/db.ts";
 import {
   context,
@@ -280,7 +280,7 @@ it("detaches replacement batches, query flags and cursors before waiting for the
     blocked = f.storage.task(taskId(20), context);
     await gate.reached;
     const write = { ...task(), value: { ...task().value, input: { original: true } } };
-    const batch: HistoryWrite[] = [write, submission()];
+    const batch: StorageWrite[] = [write, submission()];
     committed = f.storage.commit(batch, context);
     const query: TaskQuery = { background: false };
     const cursor = { after: 0, order: "ascending" as const };

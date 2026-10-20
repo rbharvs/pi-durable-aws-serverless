@@ -11,10 +11,8 @@ export function historyBoundary(
   taskWrite: Extract<StorageWrite, { type: "task" }>,
   submissionWrite: Extract<StorageWrite, { type: "submission" }>,
 ) {
-  // @ts-expect-error History is not a complete Pi Storage.
   const complete: Storage = storage;
   void complete;
-  // @ts-expect-error Deferred writes cannot be committed by the history adapter.
   void storage.commit([write], context);
   // @ts-expect-error Authority-issued leases cannot be structurally manufactured.
   const forged: Lease = {
@@ -31,8 +29,8 @@ export function historyBoundary(
   const byRequest: Storage["submissionByRequest"] = storage.submissionByRequest.bind(storage);
   void [task, submission, tasks, submissions, byRequest];
   void storage.commit([taskWrite, submissionWrite], context);
-  // @ts-expect-error No document placeholder.
-  void storage.document;
+  const document: Storage["document"] = storage.document.bind(storage);
+  void document;
   const id: Promise<EntryId> = storage.mintId<EntryId>();
   return id;
 }
