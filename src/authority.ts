@@ -54,6 +54,11 @@ export interface Authority {
   markAdmitted(received: Received, id: SubmissionId): Promise<void>;
   /** One authoritative snapshot of unmapped receipts and live task/submission records. */
   hasWork(ns: HarnessId): Promise<boolean>;
+  /**
+   * At most five Harness IDs with authoritative work and a strictly expired lease by database time.
+   * Ordered by lease expiry, then Harness ID. Advisory only: discovery does not claim ownership.
+   */
+  eligible(): Promise<HarnessId[]>;
   /** Closes this handle. Stored receipts are unaffected. */
   close(): Promise<void>;
 }
@@ -70,6 +75,9 @@ export interface Backend {
   /** Returned Storage.close must tolerate repeated calls, including after failed Harness.open. */
   openStorage(lease: Lease): Promise<Storage>;
 }
+
+/** Discovery only: a reconciler cannot claim ownership or admit receipts. */
+export type ReconcilerAuthority = Pick<Authority, "eligible" | "close">;
 
 /** Receipt-only consumers do not need native history capabilities. */
 export type ApiAuthority = Pick<Authority, "get" | "receive" | "close">;

@@ -5,6 +5,7 @@
 export { apiHandler, type ApiDependencies, type SubmitResponse } from "./submit.ts";
 export { worker, type WorkerDependencies, type WorkerResult } from "./worker.ts";
 export { runtimeDependencies, type RuntimeOptions } from "./runtime.ts";
+export { reconcile, type ReconcilerDependencies } from "./reconciler.ts";
 export type { Lease } from "./lease.ts";
 
 export { harnessId, requestId, type HarnessId, type RequestId } from "./domain.ts";
@@ -33,6 +34,7 @@ export type {
   Authority,
   ApiAuthority,
   WorkerAuthority,
+  ReconcilerAuthority,
   Backend,
   InboxItem,
   Received,
