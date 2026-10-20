@@ -222,6 +222,149 @@ it("persistent confirmed aborts stop after three re-read attempts without a rece
   }
 });
 
+for (const [stage, prefix] of [
+  ["namespace read", "SELECT ns FROM harness"],
+  ["namespace insert", "INSERT INTO harness"],
+  ["receipt read", "SELECT * FROM inbox"],
+  ["receipt insert", "INSERT INTO inbox"],
+] as const)
+  it(`a ${stage} abort storm stops at three attempts, not nested retry budgets`, async () => {
+    const store = await namespace("receive_stage_storm");
+    const causes: Error[] = [];
+    const { authority, trace } = await traced(async (phase, sql) => {
+      if (phase !== "before" || !sql.startsWith(prefix)) return;
+      const cause = confirmedAbort();
+
+      causes.push(cause);
+      throw cause;
+    });
+
+    try {
+      const failed = await authority
+        .receive(store.ns, requestId("one"), hello)
+        .catch((error: unknown) => error);
+
+      expect(causes).toHaveLength(3);
+      expect(failed).toBe(causes[2]);
+      expect(statements(trace, prefix)).toHaveLength(3);
+      expect(await store.inbox()).toEqual([]);
+      expect(
+        await store.authority.inspectionDb.query("SELECT * FROM harness WHERE ns=$1", [store.ns]),
+      ).toHaveLength(stage.startsWith("namespace") ? 0 : 1);
+      if (stage.startsWith("namespace"))
+        expect(trace.filter((q) => q.sql.includes("inbox"))).toEqual([]);
+      else {
+        const firstReceipt = trace.findIndex((q) => q.sql.startsWith("SELECT * FROM inbox"));
+
+        expect(firstReceipt).toBeGreaterThanOrEqual(0);
+        expect(trace.slice(firstReceipt).filter((q) => q.sql.includes("harness"))).toEqual([]);
+      }
+    } finally {
+      await authority.close();
+      await store.finish();
+    }
+  });
+
+for (const namespacePrefix of ["SELECT ns FROM harness", "INSERT INTO harness"])
+  for (const receiptPrefix of ["SELECT * FROM inbox", "INSERT INTO inbox"])
+    it(`namespace ${namespacePrefix} and receipt ${receiptPrefix} each get their own three-attempt budget`, async () => {
+      const store = await namespace("receive_stage_retries");
+      let namespaceAttempts = 0;
+      let receiptAttempts = 0;
+      const { authority, trace } = await traced(async (phase, sql) => {
+        if (phase !== "before") return;
+        if (sql.startsWith(namespacePrefix) && ++namespaceAttempts < 3) throw confirmedAbort();
+        if (sql.startsWith(receiptPrefix) && ++receiptAttempts < 3) throw confirmedAbort();
+      });
+
+      try {
+        const reply = await authority.receive(store.ns, requestId("one"), hello);
+
+        expect(reply.duplicate).toBe(false);
+        expect(reply.item).toMatchObject({
+          ns: store.ns,
+          hash: hello.hash,
+          payload: hello.payload,
+        });
+        expect(namespaceAttempts).toBe(3);
+        expect(receiptAttempts).toBe(3);
+        expect(statements(trace, namespacePrefix)).toHaveLength(3);
+        expect(statements(trace, receiptPrefix)).toHaveLength(3);
+        const firstReceipt = trace.findIndex((q) => q.sql.startsWith("SELECT * FROM inbox"));
+
+        expect(firstReceipt).toBeGreaterThanOrEqual(0);
+        // Receipt retries must not re-enter an already successful namespace stage.
+        expect(trace.slice(firstReceipt).filter((q) => q.sql.includes("harness"))).toEqual([]);
+        expect(await store.authority.get(store.ns, requestId("one"))).toEqual(reply.item);
+        expect(await store.inbox()).toHaveLength(1);
+        expect(
+          await store.authority.inspectionDb.query("SELECT ns FROM harness WHERE ns=$1", [
+            store.ns,
+          ]),
+        ).toEqual([{ ns: store.ns }]);
+      } finally {
+        await authority.close();
+        await store.finish();
+      }
+    });
+
+for (const applied of [false, true])
+  it(`an unknown namespace INSERT ACK applied=${applied} stops before receipt admission without retrying`, async () => {
+    const store = await namespace("namespace_unknown");
+    const cause = Error("unknown namespace insert acknowledgement");
+    const { authority, trace } = await traced(
+      faultOnce(applied ? "after" : "before", "INSERT INTO harness", () => cause),
+    );
+
+    try {
+      await expect(authority.receive(store.ns, requestId("one"), hello)).rejects.toBe(cause);
+      expect(statements(trace, "INSERT INTO harness")).toHaveLength(1);
+      expect(trace.at(-1)?.error).toBe(cause);
+      expect(trace.filter((q) => q.sql.includes("inbox"))).toEqual([]);
+      expect(
+        await store.authority.inspectionDb.query("SELECT ns FROM harness WHERE ns=$1", [store.ns]),
+      ).toEqual(applied ? [{ ns: store.ns }] : []);
+      expect(await store.inbox()).toEqual([]);
+      // A caller's explicit retry can use either durable truth without claiming a lost receipt.
+      expect((await store.authority.receive(store.ns, requestId("one"), hello)).duplicate).toBe(
+        false,
+      );
+      expect(await store.inbox()).toHaveLength(1);
+    } finally {
+      await authority.close();
+      await store.finish();
+    }
+  });
+
+for (const [insertPrefix, readPrefix] of [
+  ["INSERT INTO harness", "SELECT ns FROM harness"],
+  ["INSERT INTO inbox", "SELECT * FROM inbox"],
+] as const)
+  it(`${insertPrefix} preserves the raw 23505 when the winner re-read is empty, without retrying`, async () => {
+    const store = await namespace("missing_unique_winner");
+    const cause = Object.assign(Error("unique violation without a visible winner"), {
+      code: "23505",
+    });
+    const { authority, trace } = await traced(faultOnce("before", insertPrefix, () => cause));
+
+    try {
+      await expect(authority.receive(store.ns, requestId("one"), hello)).rejects.toBe(cause);
+      expect(statements(trace, insertPrefix)).toHaveLength(1);
+      expect(statements(trace, readPrefix)).toHaveLength(2);
+      expect(trace.at(-1)).toMatchObject({ acknowledged: true });
+      expect(trace.at(-1)?.sql.startsWith(readPrefix)).toBe(true);
+      expect(await store.inbox()).toEqual([]);
+      expect(
+        await store.authority.inspectionDb.query("SELECT ns FROM harness WHERE ns=$1", [store.ns]),
+      ).toEqual(insertPrefix === "INSERT INTO harness" ? [] : [{ ns: store.ns }]);
+      if (insertPrefix === "INSERT INTO harness")
+        expect(trace.filter((q) => q.sql.includes("inbox"))).toEqual([]);
+    } finally {
+      await authority.close();
+      await store.finish();
+    }
+  });
+
 for (const applied of [true, false])
   it(`an unknown INSERT outcome (applied=${applied}) is never retried and never asserts non-acceptance`, async () => {
     const store = await namespace("unknown_insert");

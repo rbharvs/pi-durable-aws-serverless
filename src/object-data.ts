@@ -51,3 +51,30 @@ export async function readAtMost(
 
   return output.subarray(0, bytes);
 }
+
+/** History uploads are joined even when one worker fails; output retains input order. */
+export const UPLOAD_CONCURRENCY = 4;
+
+export async function uploadValues<T>(
+  values: readonly T[],
+  upload: (value: T, index: number) => Promise<PublishedPayload>,
+): Promise<PublishedPayload[]> {
+  const output: PublishedPayload[] = [];
+  let cursor = 0;
+  let failed = false;
+  const results = await Promise.allSettled(
+    Array.from({ length: Math.min(UPLOAD_CONCURRENCY, values.length) }, async () => {
+      while (!failed && cursor < values.length) {
+        const index = cursor++;
+        try {
+          output[index] = await upload(values[index]!, index);
+        } catch (error) {
+          failed = true;
+          throw error;
+        }
+      }
+    }),
+  );
+  for (const result of results) if (result.status === "rejected") throw result.reason;
+  return output;
+}

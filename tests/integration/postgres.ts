@@ -83,7 +83,23 @@ export async function traced(hook: QueryHook = async () => {}, trace: Query[] = 
   return { authority, trace };
 }
 
-/** An isolated receipt namespace with its own authority; `finish()` deletes its rows and closes it. */
+/** One traced connection; close-count inspection is fixture-only, never a storage port. */
+export async function historyConnection(hook: QueryHook = async () => {}) {
+  const trace: Query[] = [];
+  const client = wrap(await provider.connect(), hook, trace);
+  let ends = 0;
+  const db = new Database({
+    query: client.query.bind(client),
+    async end() {
+      ends++;
+      await client.end();
+    },
+  });
+
+  return { db, trace, endCalls: () => ends };
+}
+
+/** An isolated namespace with its own authority; `finish()` deletes its rows and closes it. */
 export async function namespace(label: string) {
   const ns = harnessId(`test_${label}_${randomUUID().replaceAll("-", "")}`);
   const authority = new InspectableAuthority(await Database.connect(provider), provider);
@@ -100,7 +116,11 @@ export async function namespace(label: string) {
 
     async finish() {
       try {
-        await authority.inspectionDb.query("DELETE FROM inbox WHERE starts_with(ns, $1)", [ns]);
+        // Fixed table names and the full random namespace prefix: never clean another test's rows.
+        for (const table of ["inbox", "records", "inline_payloads", "s3_payloads", "harness"])
+          await authority.inspectionDb.query(`DELETE FROM ${table} WHERE starts_with(ns, $1)`, [
+            ns,
+          ]);
       } finally {
         await authority.close();
       }

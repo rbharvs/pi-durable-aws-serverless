@@ -1,9 +1,11 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 
 export type HarnessId = string & { readonly __harness: unique symbol };
 
 export type RequestId = string & { readonly __request: unique symbol };
 
+export type OwnerToken = string & { readonly __owner: unique symbol };
+export type Epoch = number & { readonly __epoch: unique symbol };
 export type Sha256 = string & { readonly __sha256: unique symbol };
 
 export function check(value: unknown, message: string): asserts value {
@@ -63,6 +65,29 @@ export function parseSha256(value: unknown): Sha256 {
   check(/^[a-f0-9]{64}$/.test(s), "Invalid digest");
 
   return s as Sha256;
+}
+
+export function epoch(value: unknown): Epoch {
+  return integer(value) as Epoch;
+}
+
+export function ownerToken(value: unknown = randomUUID()): OwnerToken {
+  const token = text(value);
+  check(
+    /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(token),
+    "Invalid owner UUID",
+  );
+  return token as OwnerToken;
+}
+
+/** A FIFO gate owns the connection for each entire history operation. */
+export class Mutex {
+  private tail: Promise<unknown> = Promise.resolve();
+  run<T>(fn: () => Promise<T>): Promise<T> {
+    const result = this.tail.then(fn);
+    this.tail = result.catch(() => undefined);
+    return result;
+  }
 }
 
 export const sleep = (ms: number): Promise<void> =>

@@ -2,6 +2,8 @@ import { Database, type Row } from "./db.ts";
 import {
   check,
   errorCode,
+  epoch,
+  ownerToken,
   harnessId,
   integer,
   parseSha256,
@@ -17,9 +19,28 @@ import { RequestConflict } from "../faults.ts";
 import { canonical, MAX_INLINE_INPUT_BYTES } from "../input.ts";
 import { type AcceptedInput, type Authority, type Received } from "../authority.ts";
 import { publishedPayload, type StoredPayload } from "../payload.ts";
+import { issueLease, LEASE_MARGIN_MS, type Claim, type Lease } from "../lease.ts";
 
 /** SQL expression for the database clock in Unix epoch milliseconds. */
 export const DB_NOW_MS = "floor(EXTRACT(EPOCH FROM now())*1000)::bigint";
+
+async function createNamespace(db: Database, provider: SqlProvider, ns: HarnessId): Promise<void> {
+  // Existing rows are never written by ingress. New free rows are immediately eligible,
+  // even when local INSERT and claim share a millisecond: strict '<' needs now-1.
+  await retryConfirmedAborts(provider, async () => {
+    if ((await db.query("SELECT ns FROM harness WHERE ns=$1", [ns])).length) return;
+
+    try {
+      await db.query(
+        `INSERT INTO harness(ns,epoch,owner,lease_until,next_seq,next_id) VALUES($1,0,NULL,${DB_NOW_MS}-1,1,2)`,
+        [ns],
+      );
+    } catch (error) {
+      if (errorCode(error) !== UNIQUE_VIOLATION) throw error;
+      if (!(await db.query("SELECT ns FROM harness WHERE ns=$1", [ns])).length) throw error;
+    }
+  });
+}
 
 /** PostgreSQL SQLSTATE for a unique constraint violation. */
 const UNIQUE_VIOLATION = "23505";
@@ -111,6 +132,42 @@ export class SqlAuthority implements Authority {
     private readonly provider: SqlProvider,
   ) {}
 
+  /** Strict database-clock expiry; confirmed aborts retry with one fixed owner token. */
+  async claim(ns: HarnessId, remainingMs: number): Promise<Claim> {
+    harnessId(ns);
+    check(
+      Number.isSafeInteger(remainingMs) && remainingMs > 0 && remainingMs <= 900000,
+      "Invalid remaining invocation time",
+    );
+    const owner = ownerToken();
+    return retryConfirmedAborts(this.provider, async () => {
+      const rows = await this.db.query(
+        `UPDATE harness SET epoch=epoch+1,owner=$2,lease_until=${DB_NOW_MS}+$3::bigint+$4::bigint
+           WHERE ns=$1 AND lease_until < ${DB_NOW_MS} RETURNING epoch,lease_until`,
+        [ns, owner, remainingMs, LEASE_MARGIN_MS],
+      );
+      if (rows[0])
+        return {
+          kind: "claimed",
+          lease: issueLease(ns, owner, epoch(rows[0].epoch), integer(rows[0].lease_until)),
+        };
+      check(
+        (await this.db.query("SELECT ns FROM harness WHERE ns=$1", [ns])).length === 1,
+        "Unknown namespace",
+      );
+      return { kind: "held" };
+    });
+  }
+
+  /** Join clean storage closure first. On unknown write/close failure, keep the lease until expiry. */
+  async release(lease: Lease): Promise<"released" | "lost"> {
+    const rows = await this.db.query(
+      `UPDATE harness SET owner=NULL,lease_until=${DB_NOW_MS} WHERE ns=$1 AND epoch=$2 AND owner=$3 RETURNING ns`,
+      [lease.ns, lease.epoch, lease.owner],
+    );
+    return rows.length === 1 ? "released" : "lost";
+  }
+
   close(): Promise<void> {
     return this.db.end();
   }
@@ -154,7 +211,8 @@ export class SqlAuthority implements Authority {
       check(payload.sha256 === hash, "Inbox payload integrity");
     }
 
-    // Each attempt reads first, so a retry observes a receipt stored by another request.
+    await createNamespace(this.db, this.provider, ns);
+    // Each receipt attempt re-reads the winner; namespace retries are a separate bounded stage.
     return retryConfirmedAborts(this.provider, async () => {
       const existing = await this.get(ns, request);
 

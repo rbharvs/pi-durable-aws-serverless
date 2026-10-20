@@ -29,6 +29,27 @@ Small canonical inputs stay inline in PostgreSQL. Larger inputs are published as
 
 See the [inline](tests/integration/admission.test.ts) and [staged](tests/integration/staged-admission.test.ts) integration tests for complete examples.
 
+## Internal conversation history
+
+The source-pinned [SQL history adapter](src/sql/storage.ts) stores conversations and entries
+atomically, with durable ID allocation, owner/epoch/sequence fencing, fork-aware scans, and
+cold-reopen reads. Receipt admission creates the namespace; SQL authority claims use strict
+database-clock lease expiry. Expiry alone does not invalidate the current owner's writes.
+
+History commits detach caller data before queuing and budget all SQL/payload work before
+uploading or beginning the write transaction. [History limits](src/limits.ts) are separate from
+the 8 MiB command input limit above. Large values, or values selected under transaction byte
+pressure, use immutable objects through an injected adapter. Uploads are bounded and joined on
+failure. Failed publication may leave object orphans, but no partially committed database history.
+
+Only provider-confirmed transaction aborts are retried. Unknown allocation or write-COMMIT
+outcomes fail the handle and reject queued operations. Close and reopen, then read durable
+state before deciding whether to retry; do not assume rejection. Reads validate payload
+envelopes and indexed fields.
+
+This is partial internal history storage, not a complete Pi `Storage`, `Backend`, or runtime.
+Tasks, submissions, documents, agent execution, AWS adapters, and object cleanup are not included.
+
 ## Development
 
 Requires Nix with flakes enabled. PostgreSQL integration tests also require a running Docker daemon; they create and remove a temporary PostgreSQL 16 container on localhost. No AWS credentials are required.

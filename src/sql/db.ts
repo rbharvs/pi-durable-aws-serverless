@@ -1,6 +1,9 @@
 import type pg from "pg";
 import type { SqlProvider } from "./connection.ts";
 
+export const BEGIN_WRITE = "BEGIN ISOLATION LEVEL REPEATABLE READ";
+export const BEGIN_READ = "BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY";
+
 export type SqlValue = string | number | boolean | null;
 
 export type Row = Record<string, unknown>;
