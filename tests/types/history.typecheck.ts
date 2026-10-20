@@ -8,6 +8,8 @@ export function historyBoundary(
   context: Context,
   lease: Lease,
   write: StorageWrite,
+  taskWrite: Extract<StorageWrite, { type: "task" }>,
+  submissionWrite: Extract<StorageWrite, { type: "submission" }>,
 ) {
   // @ts-expect-error History is not a complete Pi Storage.
   const complete: Storage = storage;
@@ -22,8 +24,13 @@ export function historyBoundary(
     until: lease.until,
   };
   void forged;
-  // @ts-expect-error No task placeholder.
-  void storage.task;
+  const task: Storage["task"] = storage.task.bind(storage);
+  const submission: Storage["submission"] = storage.submission.bind(storage);
+  const tasks: Storage["scanTasks"] = storage.scanTasks.bind(storage);
+  const submissions: Storage["scanSubmissions"] = storage.scanSubmissions.bind(storage);
+  const byRequest: Storage["submissionByRequest"] = storage.submissionByRequest.bind(storage);
+  void [task, submission, tasks, submissions, byRequest];
+  void storage.commit([taskWrite, submissionWrite], context);
   // @ts-expect-error No document placeholder.
   void storage.document;
   const id: Promise<EntryId> = storage.mintId<EntryId>();

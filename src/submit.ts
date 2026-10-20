@@ -1,4 +1,4 @@
-import { type AcceptedInput, type Authority } from "./authority.ts";
+import { type AcceptedInput, type ApiAuthority } from "./authority.ts";
 import { RequestConflict, StagedContentInvalid, Unavailable, InvalidInput } from "./faults.ts";
 import {
   check,
@@ -39,7 +39,7 @@ export type SubmitResponse =
     };
 
 export type ApiDependencies = {
-  connectAuthority(): Promise<Authority>;
+  connectAuthority(): Promise<ApiAuthority>;
   /** Omit for inline-only admission. A handle is acquired only for staged commands. */
   objects?(ns: HarnessId): CommandObjects;
   readonly dispatch: Dispatch;
@@ -61,7 +61,7 @@ function parse(input: unknown): { ns: HarnessId; request: RequestId; command: Pr
   }
 }
 
-async function acquireAuthority(deps: ApiDependencies): Promise<Authority> {
+async function acquireAuthority(deps: ApiDependencies): Promise<ApiAuthority> {
   try {
     return await deps.connectAuthority();
   } catch (error) {
@@ -108,7 +108,7 @@ async function resolveStaged(
 }
 
 /** Reads an existing receipt; any failure is an unavailable read. */
-async function findReceipt(authority: Authority, ns: HarnessId, request: RequestId) {
+async function findReceipt(authority: ApiAuthority, ns: HarnessId, request: RequestId) {
   try {
     return await authority.get(ns, request);
   } catch (error) {
@@ -137,11 +137,11 @@ async function publish(
 
 /** Stores the receipt. Any failure other than a conflict has an unknown outcome. */
 async function storeReceipt(
-  authority: Authority,
+  authority: ApiAuthority,
   ns: HarnessId,
   request: RequestId,
   accepted: AcceptedInput,
-): ReturnType<Authority["receive"]> {
+): ReturnType<ApiAuthority["receive"]> {
   try {
     return await authority.receive(ns, request, accepted);
   } catch (error) {
@@ -156,12 +156,12 @@ async function storeReceipt(
  * an orphan publication when the request already has a receipt.
  */
 async function receivePublished(
-  authority: Authority,
+  authority: ApiAuthority,
   objects: CommandObjects,
   ns: HarnessId,
   request: RequestId,
   input: CanonicalInput,
-): ReturnType<Authority["receive"]> {
+): ReturnType<ApiAuthority["receive"]> {
   const existing = await findReceipt(authority, ns, request);
 
   if (existing) {
@@ -205,9 +205,9 @@ function failure(error: unknown): Extract<SubmitResponse, { ok: false }> {
 export function apiHandler(deps: ApiDependencies) {
   return async (input: unknown): Promise<SubmitResponse> => {
     let ns: HarnessId;
-    let ack: Awaited<ReturnType<Authority["receive"]>>;
+    let ack: Awaited<ReturnType<ApiAuthority["receive"]>>;
     // Resources opened by this call. `finally` closes them before the wake.
-    let authority: Authority | undefined;
+    let authority: ApiAuthority | undefined;
     let objects: CommandObjects | undefined;
 
     try {

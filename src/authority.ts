@@ -1,3 +1,4 @@
+import type { SubmissionId } from "@earendil-works/pi-durable";
 import type { HarnessId, RequestId, Sha256 } from "./domain.ts";
 import type { StoredPayload } from "./payload.ts";
 
@@ -23,8 +24,13 @@ export type Received = {
   readonly receivedAt: number;
 };
 
-/** A stored inbox entry. Receipts are currently the only kind. */
-export type InboxItem = Received;
+/** The original receipt with its durable submission mapping. */
+export type Admitted = Omit<Received, "kind"> & {
+  readonly kind: "admitted";
+  readonly submission: SubmissionId;
+};
+
+export type InboxItem = Received | Admitted;
 
 /** Durable receipt storage. Each method is one atomic operation. */
 export interface Authority {
@@ -39,9 +45,15 @@ export interface Authority {
     request: RequestId,
     accepted: AcceptedInput,
   ): Promise<{ duplicate: boolean; item: InboxItem }>;
+  /** At most eight unmapped receipts, oldest first. */
+  received(ns: HarnessId): Promise<Received[]>;
+  /** Maps a receipt to an existing submission; equal repeats are harmless, changes fail. */
+  markAdmitted(received: Received, id: SubmissionId): Promise<void>;
+  /** One authoritative snapshot of unmapped receipts and live task/submission records. */
+  hasWork(ns: HarnessId): Promise<boolean>;
   /** Closes this handle. Stored receipts are unaffected. */
   close(): Promise<void>;
 }
 
-/** The authority operations the submit handler uses; currently all of them. */
+/** Receipt-only consumers do not need native history capabilities. */
 export type ApiAuthority = Pick<Authority, "get" | "receive" | "close">;

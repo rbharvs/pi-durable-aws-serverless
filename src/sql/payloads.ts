@@ -20,9 +20,13 @@ function payloadRef(value: unknown): PayloadRef {
   return ref as PayloadRef;
 }
 
-type PayloadRow = { readonly ref: PayloadRef; readonly payload: StoredPayload };
+type PayloadMetadata = {
+  readonly ref: PayloadRef;
+  readonly payload: { readonly kind: "inline" } | S3Payload;
+};
 
-function stored(row: Row, ns: HarnessId): PayloadRow {
+/** Ownership and envelope checks need no inline body, including when replacing a record. */
+function storedMetadata(row: Row, ns: HarnessId): PayloadMetadata {
   check(row.ns === ns, "Foreign owner namespace");
 
   const ref = payloadRef(row.payload_ref);
@@ -37,11 +41,7 @@ function stored(row: Row, ns: HarnessId): PayloadRow {
       "Unexpected S3 columns",
     );
 
-    const json = jsonText(row.inline_json);
-
-    check(Buffer.byteLength(json) <= LIMITS.maxInlineBytes, "Inline payload exceeds bound");
-
-    return { ref, payload: { kind: "inline", json } };
+    return { ref, payload: { kind: "inline" } };
   }
 
   check(row.payload_kind === "s3", "Invalid payload kind");
@@ -152,16 +152,19 @@ export class PayloadCorrupt extends Error {
 
 export const PAYLOAD_COLUMNS = ["payload_kind", "payload_ref"] as const;
 
-// Scalar projections defer payload work until the owner row is returned. Probe both
-// sides, regardless of kind: stored() must still reject both-present corruption.
-export const projection = (table: OwnerTable): string =>
+// Probe both payload tables regardless of kind, without fetching the previous inline body.
+export const referenceProjection = (table: OwnerTable): string =>
   `${table}.*,
        (SELECT ip.payload_ref FROM inline_payloads ip WHERE ip.ns=${table}.ns AND ip.payload_ref=${table}.payload_ref) AS inline_ref,
-       (SELECT ip.json FROM inline_payloads ip WHERE ip.ns=${table}.ns AND ip.payload_ref=${table}.payload_ref) AS inline_json,
        (SELECT sp.payload_ref FROM s3_payloads sp WHERE sp.ns=${table}.ns AND sp.payload_ref=${table}.payload_ref) AS s3_ref,
        (SELECT sp.object_key FROM s3_payloads sp WHERE sp.ns=${table}.ns AND sp.payload_ref=${table}.payload_ref) AS object_key,
        (SELECT sp.sha256 FROM s3_payloads sp WHERE sp.ns=${table}.ns AND sp.payload_ref=${table}.payload_ref) AS sha256,
        (SELECT sp.bytes FROM s3_payloads sp WHERE sp.ns=${table}.ns AND sp.payload_ref=${table}.payload_ref) AS bytes`;
+
+/** Reads add the inline body only for owners selected by the query. */
+export const projection = (table: OwnerTable): string =>
+  `${referenceProjection(table)},
+       (SELECT ip.json FROM inline_payloads ip WHERE ip.ns=${table}.ns AND ip.payload_ref=${table}.payload_ref) AS inline_json`;
 
 /** Fixed hybrid payload representation: complete planning precedes every object upload. */
 export class Payloads {
@@ -179,11 +182,11 @@ export class Payloads {
       check(input.ns === ns, "Foreign payload namespace");
 
       const size = objectSize(input.json);
-      let old: PayloadRow | undefined;
+      let old: PayloadMetadata | undefined;
 
       if (input.previous) {
         try {
-          old = stored(input.previous, ns);
+          old = storedMetadata(input.previous, ns);
         } catch (error) {
           throw new PayloadCorrupt(`${ns}/${input.table}/${input.id}`, error);
         }
@@ -290,9 +293,13 @@ export class Payloads {
       objects = this.objects;
 
     try {
-      const { payload } = stored(row, ns);
+      const { payload } = storedMetadata(row, ns);
 
-      if (payload.kind === "inline") return payload.json;
+      if (payload.kind === "inline") {
+        const json = jsonText(row.inline_json);
+        check(Buffer.byteLength(json) <= LIMITS.maxInlineBytes, "Inline payload exceeds bound");
+        return json;
+      }
       const expectedBytes = payload.bytes,
         expectedHash = payload.sha256;
       const json = jsonText(await objects.get(payload));

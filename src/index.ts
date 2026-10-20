@@ -25,6 +25,13 @@ export {
   type ObjectKey,
 } from "./payload.ts";
 
-export type { AcceptedInput, Authority, ApiAuthority, InboxItem, Received } from "./authority.ts";
+export type {
+  AcceptedInput,
+  Authority,
+  ApiAuthority,
+  InboxItem,
+  Received,
+  Admitted,
+} from "./authority.ts";
 
 export type { Dispatch, Events } from "./dispatch.ts";

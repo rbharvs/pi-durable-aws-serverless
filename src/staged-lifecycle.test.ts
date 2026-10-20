@@ -1,7 +1,7 @@
 import { Readable } from "node:stream";
 import { expect, it } from "vitest";
 import { apiHandler, type ApiDependencies } from "./submit.ts";
-import type { Authority } from "./authority.ts";
+import type { ApiAuthority } from "./authority.ts";
 import { canonical, MAX_INLINE_INPUT_BYTES } from "./input.ts";
 import { computeSha256, harnessId } from "./domain.ts";
 import { objectFixture } from "../tests/shared/objects.ts";
@@ -10,7 +10,7 @@ const ns = harnessId("lifecycle");
 const small = canonical({ content: "hello", whenBusy: "followUp" });
 const large = canonical({ content: "x".repeat(MAX_INLINE_INPUT_BYTES), whenBusy: "steer" });
 
-function recordingAuthority(order: string[]): Authority {
+function recordingAuthority(order: string[]): ApiAuthority {
   return {
     get: async () => undefined,
     receive: async (ns, request, accepted) => ({
