@@ -2,7 +2,7 @@ import { expect, it } from "vitest";
 import { apiHandler } from "../../src/submit.ts";
 import { namespace, traced, type Query } from "./postgres.ts";
 
-it("a new request uses one read and one insert; a duplicate or conflict uses one read", async () => {
+it("ingress checks namespace existence without rewriting an existing ownership head", async () => {
   const store = await namespace("statements");
   const trace: Query[] = [];
   const run = apiHandler({
@@ -38,7 +38,10 @@ it("a new request uses one read and one insert; a duplicate or conflict uses one
       { ...outcomes[0], duplicate: true },
       { ok: false, code: "request-conflict", retryable: false },
     ]);
-    expect(counts).toEqual([2, 2, 1, 1]);
+    // First request creates the free head; later requests only check that it exists.
+    // Receipt operations remain SELECT+INSERT for a new request and SELECT for a repeat.
+    expect(counts).toEqual([4, 3, 2, 2]);
+    expect(trace.filter((q) => /^(INSERT INTO|UPDATE) harness/.test(q.sql))).toEqual([]);
     console.log("SQL new namespace/new request/duplicate/conflict:", counts);
   } finally {
     await store.finish();

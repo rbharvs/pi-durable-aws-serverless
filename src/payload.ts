@@ -8,6 +8,27 @@ import {
   type Sha256,
 } from "./domain.ts";
 import { MAX_INPUT_BYTES, MAX_INLINE_INPUT_BYTES } from "./input.ts";
+import { LIMITS } from "./limits.ts";
+
+export class EnvelopeRejected extends Error {}
+
+export function assertEnvelope(rows: number, bytes: number): void {
+  if (rows > LIMITS.maxRows || bytes > LIMITS.maxTransactionBytes)
+    throw new EnvelopeRejected(
+      `Atomic envelope exceeded: rows=${rows}/${LIMITS.maxRows}, estimatedBytes=${bytes}/${LIMITS.maxTransactionBytes}`,
+    );
+}
+
+/** History JSON has its own physical bound; it is not the command input format. */
+export function jsonText(value: unknown): string {
+  const json = text(value);
+  JSON.parse(json);
+  check(
+    Buffer.from(json, "utf8").toString("utf8") === json && !json.includes("\u0000"),
+    "Non UTF-8/NUL JSON text",
+  );
+  return json;
+}
 
 export type ObjectKey = string & { readonly __objectKey: unique symbol };
 
