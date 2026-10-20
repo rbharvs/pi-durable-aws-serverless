@@ -142,6 +142,36 @@ it("rejects a reversed decoded lifetime even when both endpoints are valid point
   }
 });
 
+it("rejects raw document write before SQL or object I/O and keeps valid document commands healthy", async () => {
+  const f = await historyFixture("raw_document", { objects: memoryObjects });
+  try {
+    const before = await f.storage.commit([], context);
+    f.trace.length = 0;
+    await expect(
+      f.storage.commit(
+        [
+          dataEntry(39, "x".repeat(300 * 1024)),
+          {
+            type: "document",
+            value: { id: 40, kind: "raw", scope: { kind: "session" }, createdAt: 0 },
+          } as unknown as StorageWrite,
+        ],
+        context,
+      ),
+    ).rejects.toBeInstanceOf(StorageRequestError);
+    expect(f.trace).toEqual([]);
+    expect(f.memory.operations).toEqual([]);
+    expect(await f.storage.mintId()).toBe(2);
+    expect(await f.storage.commit([documentCreate()], context)).toBe(before + 1);
+    expect(await f.storage.document(documentId(20), "current", context)).toMatchObject({
+      record: { id: 20 },
+      value: { count: 1, rows: [] },
+    });
+  } finally {
+    await f.finish();
+  }
+});
+
 for (const command of ["document.create", "document.copy"] as const)
   for (const field of ["createdAt", "retiredAt"] as const)
     it(`rejects caller-supplied ${field} on ${command} before I/O`, async () => {

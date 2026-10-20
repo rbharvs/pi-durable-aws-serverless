@@ -7,6 +7,7 @@ export { worker, type WorkerDependencies, type WorkerResult } from "./worker.ts"
 export { runtimeDependencies, type RuntimeOptions } from "./runtime.ts";
 export { reconcile, type ReconcilerDependencies } from "./reconciler.ts";
 export type { Lease } from "./lease.ts";
+export { createMemoryBackend, type MemoryBackendOptions } from "./memory.ts";
 
 export { harnessId, requestId, type HarnessId, type RequestId } from "./domain.ts";
 

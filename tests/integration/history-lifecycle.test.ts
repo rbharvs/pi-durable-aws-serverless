@@ -202,8 +202,9 @@ it("close is immediate for new/queued work, drains the active operation, ends on
 
     await gate.reached;
     const queued = Promise.allSettled([
-      f.storage.mintId(),
       f.storage.conversation(conversationId(1), context),
+      f.storage.commit([entry(20)], context),
+      f.storage.mintId(),
     ]);
     const closing = f.storage.close(context);
     const closingAgain = f.storage.close(context);
@@ -224,7 +225,9 @@ it("close is immediate for new/queued work, drains the active operation, ends on
     const { storage } = await f.open();
 
     expect(await storage.conversation(conversationId(1), context)).toEqual(conversation().value);
+    expect(await storage.entry(entryId(20), context)).toBeUndefined();
     expect(await storage.mintId()).toBe(2);
+    expect(await storage.commit([], context)).toBe(2);
   } finally {
     gate.release();
     await f.finish();

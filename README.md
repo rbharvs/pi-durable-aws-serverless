@@ -1,8 +1,8 @@
 # Pi Durable on AWS Serverless
 
-An example of [`@earendil-works/pi-durable`](https://www.npmjs.com/package/@earendil-works/pi-durable) targeting AWS Lambda and Amazon Aurora DSQL. Currently, it runs locally on PostgreSQL and provides a request receipt API, a worker that runs real Pi over those receipts, a reconciler for missed hints, and a complete Pi 1.3.0 `Storage` implementation. AWS adapters are not yet included.
+An example of [`@earendil-works/pi-durable`](https://www.npmjs.com/package/@earendil-works/pi-durable) targeting AWS Lambda and Amazon Aurora DSQL. Currently, it runs locally on PostgreSQL and provides a request receipt API, a worker that runs real Pi over those receipts, a reconciler for missed hints, and a complete Pi 1.3.0 `Storage` implementation. A public in-memory backend supports local development and tests; AWS adapters are not yet included.
 
-Storage persists conversations, entries, tasks, submissions, and documents, with atomic commits, document history, and forks. An internal [backend factory](src/sql/backend.ts) pairs Authority and Storage; it is not a public package API.
+SQL storage persists conversations, entries, tasks, submissions, and documents, with atomic commits, document history, and forks. An internal [backend factory](src/sql/backend.ts) pairs Authority and Storage; it is not a public package API.
 
 ## Usage
 
@@ -14,6 +14,12 @@ Each Harness ID and request ID identifies an immutable receipt. Retrying with th
 Staged keys use `in/<Harness ID>/<name>`, where the name is 1–128 ASCII letters, digits, or `._-`, excluding `.` and `..`. `sha256` and `bytes` describe the raw uploaded bytes, not canonical JSON. See [input limits](src/input.ts).
 
 See the [inline](tests/integration/admission.test.ts) and [staged](tests/integration/staged-admission.test.ts) examples. Staged input requires an adapter implementing [`CommandObjects`](src/object-data.ts); the package does not upload staging files for the caller.
+
+## Memory backend
+
+Use `createMemoryBackend({ now?: () => number })` from [the public entry](src/index.ts) as the `backend` passed to `runtimeDependencies`. Omit `now` for the system clock; tests can supply a deterministic clock. Reuse the same backend to retain state across handle closes and worker invocations. See the [public consumer](src/memory-consumer.test.ts).
+
+Memory uses Pi's public MemoryStorage and implements the same lease, receipt and allocation contracts. It is **not persistent**: losing the backend loses all state. Use SQL for durable storage. [Parity limits](tests/shared/PARITY.md) distinguish logical contracts from SQL transactions, object storage and physical budgets.
 
 ## Worker
 
@@ -46,7 +52,7 @@ nix develop --command pnpm install --frozen-lockfile
 # Check lint, formatting, and types
 nix develop --command pnpm check
 
-# Run offline tests
+# Run offline tests (including memory histories: two seeds × 50 cases)
 nix develop --command pnpm test
 
 # Run PostgreSQL integration tests
