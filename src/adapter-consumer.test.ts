@@ -4,7 +4,7 @@ import {
   canonical,
   harnessId,
   type ApiDependencies,
-  type Authority,
+  type ApiAuthority,
   type CommandObjects,
   type HarnessId,
 } from "./index.ts";
@@ -14,7 +14,7 @@ it("accepts staged input through an instance-backed public dependency method", a
   const fixture = objectFixture();
   const ns = harnessId("class_factory");
   const input = canonical({ content: "hello", whenBusy: "followUp" });
-  const authority: Authority = {
+  const authority: ApiAuthority = {
     get: async () => undefined,
     receive: async (ns, request, accepted) => ({
       duplicate: false,

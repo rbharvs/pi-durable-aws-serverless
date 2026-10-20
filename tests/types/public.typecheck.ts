@@ -1,5 +1,6 @@
 import type {
   Authority,
+  ApiAuthority,
   ApiDependencies,
   SubmitResponse,
   CommandObjects,
@@ -10,7 +11,10 @@ type Assert<T extends true> = T;
 type Equal<A, B> =
   (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2 ? true : false;
 
-export type AuthorityKeys = Assert<Equal<keyof Authority, "get" | "receive" | "close">>;
+export type AuthorityKeys = Assert<
+  Equal<keyof Authority, "get" | "receive" | "received" | "markAdmitted" | "hasWork" | "close">
+>;
+export type ApiAuthorityKeys = Assert<Equal<keyof ApiAuthority, "get" | "receive" | "close">>;
 
 export type ApiDependencyKeys = Assert<
   Equal<keyof ApiDependencies, "connectAuthority" | "objects" | "dispatch" | "event" | "report">

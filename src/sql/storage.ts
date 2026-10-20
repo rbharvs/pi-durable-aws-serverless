@@ -11,6 +11,11 @@ import type {
   EntryId,
   EntryRecord,
   EntryQuery,
+  TaskId,
+  TaskQuery,
+  SubmissionId,
+  SubmissionRecord,
+  SubmissionQuery,
   Cursor,
   Page,
   ScanOrder,
@@ -20,6 +25,7 @@ import type { SqlProvider } from "./connection.ts";
 import {
   Payloads,
   projection,
+  referenceProjection,
   PAYLOAD_COLUMNS,
   PayloadCorrupt,
   type PayloadInput,
@@ -29,8 +35,10 @@ import { assertEnvelope } from "../payload.ts";
 import type { PayloadObjects } from "../s3-payload.ts";
 import type { Lease } from "../lease.ts";
 import { freezeWrites as freeze, storedHighWater, type HistoryWrite } from "../write-bounds.ts";
-import { validateRecord, type RecordType, type Records } from "./records.ts";
+import { recordShape, validateRecord, type RecordType, type Records } from "./records.ts";
 import { check, integer, computeSha256, Mutex, sleep } from "../domain.ts";
+
+type StoredTask = Records["task"];
 
 type Mutation = { sql: string; params: SqlValue[]; payload: PayloadInput };
 
@@ -40,17 +48,6 @@ type AdapterState = "open" | "failed" | "closed";
 function assertSafeInteger(value: unknown): asserts value is number {
   if (typeof value !== "number" || !Number.isSafeInteger(value))
     throw new StorageRequestError("Expected safe integer number");
-}
-
-function assertId(value: unknown): asserts value is number {
-  assertSafeInteger(value);
-  if (value <= 0) throw new StorageRequestError("Expected positive ID");
-}
-
-/** Persisted head/fork points follow the decoded envelope's nonnegative numeric range. */
-function assertPoint(value: unknown): asserts value is number {
-  assertSafeInteger(value);
-  if (value < 0) throw new StorageRequestError("Expected nonnegative history point");
 }
 
 /** Only allocation/sequence heads may contain the exact exhausted sentinel. */
@@ -293,6 +290,87 @@ export class SqlStorage {
     });
   }
 
+  task(id: TaskId, _context: Context): Promise<StoredTask | undefined> {
+    return this.run(() => this.get("task", id));
+  }
+
+  submission(id: SubmissionId, _context: Context): Promise<SubmissionRecord | undefined> {
+    return this.run(() => this.get("submission", id));
+  }
+
+  async scanTasks(
+    query: TaskQuery,
+    limit: number,
+    cursor: Cursor | undefined,
+    _context: Context,
+  ): Promise<Page<StoredTask, Cursor>> {
+    const { conversationId, kind, status, abortRequested, background, order } = query;
+    const position =
+      cursor === undefined ? undefined : { after: cursor.after, order: cursor.order };
+    return this.run(() => {
+      if (conversationId !== undefined) assertSafeInteger(conversationId);
+      const clauses: string[] = [];
+      const params: SqlValue[] = [];
+      for (const [column, value] of [
+        ["conversation_id", conversationId],
+        ["kind_hash", kind === undefined ? undefined : computeSha256(JSON.stringify(kind))],
+        ["status", status],
+        ["abort_requested", abortRequested],
+        ["background", background],
+      ] as const) {
+        if (value !== undefined) {
+          params.push(value);
+          clauses.push(`${column}=$${params.length + 2}`);
+        }
+      }
+      return this.scan("task", clauses, params, limit, position, order);
+    });
+  }
+
+  async scanSubmissions(
+    query: SubmissionQuery,
+    limit: number,
+    cursor: Cursor | undefined,
+    _context: Context,
+  ): Promise<Page<SubmissionRecord, Cursor>> {
+    const { conversationId, status, order } = query;
+    const position =
+      cursor === undefined ? undefined : { after: cursor.after, order: cursor.order };
+    return this.run(() => {
+      const clauses: string[] = [];
+      const params: SqlValue[] = [];
+      if (conversationId !== undefined) {
+        assertSafeInteger(conversationId);
+        params.push(conversationId);
+        clauses.push(`conversation_id=$${params.length + 2}`);
+      }
+      if (status !== undefined) {
+        params.push(status);
+        clauses.push(`status=$${params.length + 2}`);
+      }
+      return this.scan("submission", clauses, params, limit, position, order);
+    });
+  }
+
+  submissionByRequest(
+    conversationId: ConversationId,
+    requestId: string,
+    _context: Context,
+  ): Promise<SubmissionRecord | undefined> {
+    return this.run(async () => {
+      assertSafeInteger(conversationId);
+      const rows = await this.q(
+        `SELECT ${projection("records")} FROM records WHERE ns=$1 AND type='submission' AND conversation_id=$2 AND request_hash=$3`,
+        [this.lease.ns, conversationId, computeSha256(JSON.stringify(requestId))],
+      );
+      for (const row of rows) {
+        const value = await this.decode(row, "submission");
+        if (value.requestId === requestId) return value;
+      }
+      return undefined;
+    });
+  }
+
   private async chain(
     id: ConversationId,
   ): Promise<{ record: ConversationRecord; upper: number }[]> {
@@ -427,7 +505,7 @@ export class SqlStorage {
     });
   }
 
-  private recordMutation(write: HistoryWrite, seq: Seq): Mutation {
+  private recordMutation(write: HistoryWrite, seq: Seq, previous?: Row): Mutation {
     const columns = [
       "ns",
       "id",
@@ -453,14 +531,22 @@ export class SqlStorage {
       this.lease.ns,
       write.value.id,
       write.type,
-      write.type === "entry" ? write.value.conversationId : null,
+      write.type !== "conversation" ? write.value.conversationId : null,
       write.type === "conversation" ? (write.value.owner?.conversationId ?? null) : null,
       write.type === "conversation" ? (write.value.owner?.taskId ?? null) : null,
-      write.type === "entry" ? computeSha256(JSON.stringify(write.value.kind)) : null,
-      null,
-      null,
-      null,
-      null,
+      write.type === "entry" || write.type === "task"
+        ? computeSha256(JSON.stringify(write.value.kind))
+        : null,
+      write.type === "task"
+        ? write.value.state.status
+        : write.type === "submission"
+          ? write.value.status
+          : null,
+      write.type === "task" ? write.value.abortRequested : null,
+      write.type === "task" ? write.value.background : null,
+      write.type === "submission" && write.value.requestId !== undefined
+        ? computeSha256(JSON.stringify(write.value.requestId))
+        : null,
       write.type === "entry" ? write.value.head !== undefined : null,
       write.type === "entry" ? seq : null,
       null,
@@ -471,13 +557,22 @@ export class SqlStorage {
     ];
 
     return {
-      sql: `INSERT INTO records(${columns.join(",")}) VALUES(${columns.map((_, i) => "$" + (i + 1)).join(",")})`,
+      sql: `INSERT INTO records(${columns.join(",")}) VALUES(${columns.map((_, i) => "$" + (i + 1)).join(",")})${
+        write.type === "task" || write.type === "submission"
+          ? " ON CONFLICT(ns,id) DO UPDATE SET " +
+            columns
+              .slice(3)
+              .map((c) => `${c}=excluded.${c}`)
+              .join(",")
+          : ""
+      }`,
       params,
       payload: {
         table: "records",
         ns: this.lease.ns,
         id: write.value.id,
         json: JSON.stringify(write.value),
+        ...(previous ? { previous } : {}),
       },
     };
   }
@@ -491,25 +586,35 @@ export class SqlStorage {
     writes: readonly HistoryWrite[],
     seq: Seq,
   ): Promise<Mutation[]> {
-    const ids = writes.map((write) => write.value.id);
-    const claimed = new Set<number>();
-    for (const id of ids) {
-      check(!claimed.has(id), `ID ${id} is written more than once`);
-      claimed.add(id);
-    }
-
+    const ids = [...new Set(writes.map((write) => write.value.id))];
+    const existing = new Map<number, Row>();
     if (ids.length > 0) {
       // freezeWrites allows at most 999 numeric ID binds, plus the namespace.
       const placeholders = ids.map((_, i) => `$${i + 2}`).join(",");
-      const existing = (
-        await this.q(
-          `SELECT id,type FROM records WHERE ns=$1 AND id IN (${placeholders}) ORDER BY id LIMIT 1`,
-          [this.lease.ns, ...ids],
-        )
-      )[0];
-      check(!existing, `ID ${String(existing?.id)} already belongs to ${String(existing?.type)}`);
+      const rows = await this.q(
+        `SELECT ${referenceProjection("records")} FROM records WHERE ns=$1 AND id IN (${placeholders}) ORDER BY id`,
+        [this.lease.ns, ...ids],
+      );
+      for (const row of rows) existing.set(integer(row.id), row);
     }
-    return writes.map((write) => this.recordMutation(write, seq));
+    const claimed = new Map<number, RecordType>();
+    return writes.map((write) => {
+      const id = write.value.id;
+      const prior = existing.get(id);
+      const earlier = claimed.get(id);
+      if (write.type === "conversation" || write.type === "entry") {
+        check(!earlier, `ID ${id} is written more than once`);
+        check(!prior, `ID ${id} already belongs to ${String(prior?.type)}`);
+      } else {
+        check(!earlier || earlier === write.type, `ID ${id} is written as two record types`);
+        check(
+          !prior || prior.type === write.type,
+          `ID ${id} already belongs to ${String(prior?.type)}`,
+        );
+      }
+      claimed.set(id, write.type);
+      return this.recordMutation(write, seq, prior);
+    });
   }
 
   private async validateSnapshot(frozen: readonly HistoryWrite[], seq: Seq): Promise<Mutation[]> {
@@ -613,20 +718,11 @@ export class SqlStorage {
   async commit(writes: readonly HistoryWrite[], _context: Context): Promise<Seq> {
     const frozen = freeze(writes);
     for (const write of frozen) {
-      check(write.type === "conversation" || write.type === "entry", "Invalid history write type");
-      assertId(write.value.id);
-      if (write.type === "entry") {
-        assertId(write.value.conversationId);
-        if (write.value.head !== undefined) assertPoint(write.value.head);
-      } else {
-        if (write.value.owner !== undefined) {
-          assertId(write.value.owner.conversationId);
-          assertId(write.value.owner.taskId);
-        }
-        if (write.value.parent !== undefined) {
-          assertId(write.value.parent.conversationId);
-          assertPoint(write.value.parent.at);
-        }
+      try {
+        // freeze() normalized the exact JSON used by index/ID accounting and publication.
+        recordShape(write.value, write.type);
+      } catch (error) {
+        throw new StorageRequestError(`Invalid ${String(write?.type)} write: ${String(error)}`);
       }
     }
 

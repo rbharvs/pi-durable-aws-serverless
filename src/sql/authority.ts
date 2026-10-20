@@ -1,3 +1,6 @@
+import type { SubmissionId } from "@earendil-works/pi-durable";
+import { idFromNumber } from "../ids.ts";
+import { PayloadCorrupt } from "./payloads.ts";
 import { Database, type Row } from "./db.ts";
 import {
   check,
@@ -17,7 +20,7 @@ import {
 import { type SqlProvider } from "./connection.ts";
 import { RequestConflict } from "../faults.ts";
 import { canonical, MAX_INLINE_INPUT_BYTES } from "../input.ts";
-import { type AcceptedInput, type Authority, type Received } from "../authority.ts";
+import { type AcceptedInput, type Authority, type Received, type InboxItem } from "../authority.ts";
 import { publishedPayload, type StoredPayload } from "../payload.ts";
 import { issueLease, LEASE_MARGIN_MS, type Claim, type Lease } from "../lease.ts";
 
@@ -49,6 +52,12 @@ const MAX_ATTEMPTS = 3;
 
 const RETRY_BACKOFF_MS = 20;
 
+/** Receipts and Pi-owned live states are observed in one SQL snapshot. */
+const WORK = `
+  EXISTS (SELECT 1 FROM inbox i WHERE i.ns=h.ns AND i.submission_id IS NULL)
+  OR EXISTS (SELECT 1 FROM records r WHERE r.ns=h.ns AND r.type='task' AND r.status IN ('pending','running','waiting','completing'))
+  OR EXISTS (SELECT 1 FROM records r WHERE r.ns=h.ns AND r.type='submission' AND r.status IN ('queued','placed'))`;
+
 /**
  * Checks that `json` is canonical Pi input within the inline cap and that `hash` is its SHA-256.
  * The byte cap is checked before parsing.
@@ -70,7 +79,7 @@ function verifyInlinePayload(
 }
 
 /** Converts a stored row to a receipt and rejects rows whose payload fails verification. */
-function parseReceivedRow(row: Row): Received {
+function parseInboxRow(row: Row): InboxItem {
   const ns = harnessId(row.ns);
   const hash = parseSha256(row.payload_sha256);
   let payload: StoredPayload;
@@ -90,14 +99,21 @@ function parseReceivedRow(row: Row): Received {
     });
   }
 
-  return {
-    kind: "received",
+  const base = {
     ns,
     request: requestId(row.request_id),
     hash,
     payload,
     receivedAt: integer(row.received_at),
   };
+  if (row.submission_id === null) return { ...base, kind: "received" };
+  try {
+    const id = integer(row.submission_id);
+    check(id > 0, "Invalid submission ID");
+    return { ...base, kind: "admitted", submission: idFromNumber<SubmissionId>(id) };
+  } catch (error) {
+    throw new PayloadCorrupt(`${ns}/inbox/${base.request}`, error);
+  }
 }
 
 /**
@@ -120,7 +136,7 @@ async function retryConfirmedAborts<T>(
 }
 
 /** Returns `existing` as a duplicate receipt, or throws if it stores a different input. */
-function duplicateOf(existing: Received, hash: Sha256): { duplicate: true; item: Received } {
+function duplicateOf(existing: InboxItem, hash: Sha256): { duplicate: true; item: InboxItem } {
   if (existing.hash !== hash) throw new RequestConflict();
 
   return { duplicate: true, item: existing };
@@ -168,24 +184,75 @@ export class SqlAuthority implements Authority {
     return rows.length === 1 ? "released" : "lost";
   }
 
+  async received(ns: HarnessId): Promise<Received[]> {
+    const rows = await this.db.query(
+      "SELECT * FROM inbox WHERE ns=$1 AND submission_id IS NULL ORDER BY received_at,request_id LIMIT 8",
+      [ns],
+    );
+    return rows.map((row) => {
+      const item = parseInboxRow(row);
+      check(item.kind === "received", "Inbox query inconsistency");
+      return item;
+    });
+  }
+
+  async markAdmitted(received: Received, id: SubmissionId): Promise<void> {
+    const { ns, request, hash } = received;
+    harnessId(ns);
+    requestId(request);
+    parseSha256(hash);
+    check(typeof id === "number" && Number.isSafeInteger(id) && id > 0, "Invalid submission ID");
+    await retryConfirmedAborts(this.provider, async () => {
+      const prior = await this.get(ns, request);
+      check(prior && prior.hash === hash, "Inbox identity changed");
+      if (prior.kind === "admitted") {
+        check(prior.submission === id, "Admission mapping changed");
+        return;
+      }
+
+      // Mapping records a completed publication, not lease ownership. A takeover must not
+      // revoke the original publisher's ability to map an already-stored submission.
+      const rows = await this.db.query(
+        `UPDATE inbox SET submission_id=$3
+         WHERE ns=$1 AND request_id=$2 AND submission_id IS NULL AND payload_sha256=$4
+         AND EXISTS(SELECT 1 FROM records WHERE ns=$1 AND id=$3 AND type='submission')
+         RETURNING submission_id`,
+        [ns, request, id, hash],
+      );
+      if (!rows.length) {
+        const current = await this.get(ns, request);
+        check(
+          current?.kind === "admitted" && current.submission === id && current.hash === hash,
+          "Submission missing or admission mapping changed",
+        );
+      }
+    });
+  }
+
+  async hasWork(ns: HarnessId): Promise<boolean> {
+    const rows = await this.db.query(`SELECT (${WORK}) AS work FROM harness h WHERE h.ns=$1`, [ns]);
+    check(rows.length === 1 && typeof rows[0].work === "boolean", "Unknown namespace/work result");
+    return rows[0].work;
+  }
+
   close(): Promise<void> {
     return this.db.end();
   }
 
-  async get(ns: HarnessId, request: RequestId): Promise<Received | undefined> {
+  async get(ns: HarnessId, request: RequestId): Promise<InboxItem | undefined> {
     const rows = await this.db.query("SELECT * FROM inbox WHERE ns=$1 AND request_id=$2", [
       ns,
       request,
     ]);
 
-    return rows[0] ? parseReceivedRow(rows[0]) : undefined;
+    return rows[0] ? parseInboxRow(rows[0]) : undefined;
   }
 
   async receive(
     ns: HarnessId,
     request: RequestId,
     accepted: AcceptedInput,
-  ): Promise<{ duplicate: boolean; item: Received }> {
+  ): Promise<{ duplicate: boolean; item: InboxItem }> {
     // Read each caller-owned field once, before the first await, then validate those values.
     const hash = parseSha256(accepted.hash);
     const source = accepted.payload;
@@ -235,7 +302,7 @@ export class SqlAuthority implements Authority {
 
         check(rows[0], "Inbox insert missing result");
 
-        return { duplicate: false, item: parseReceivedRow(rows[0]) };
+        return { duplicate: false, item: parseInboxRow(rows[0]) };
       } catch (error) {
         if (errorCode(error) !== UNIQUE_VIOLATION) throw error;
 

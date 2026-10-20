@@ -38,6 +38,7 @@ CREATE TABLE inbox (
   object_key text,
   object_bytes integer,
   received_at bigint NOT NULL,
+  submission_id bigint,
   PRIMARY KEY (ns, request_id),
   CHECK (
     (payload_kind='inline' AND json IS NOT NULL AND octet_length(json)<=262144
@@ -47,3 +48,5 @@ CREATE TABLE inbox (
       AND object_bytes IS NOT NULL AND object_bytes>262144 AND object_bytes<=8388608)
   )
 );
+-- Unmapped receipts, oldest first: received() and WORK. Mapped receipts accumulate.
+CREATE INDEX inbox_unmapped ON inbox(ns,received_at,request_id) WHERE submission_id IS NULL;
