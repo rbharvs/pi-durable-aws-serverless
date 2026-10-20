@@ -1,9 +1,15 @@
 import type {
   ConversationRecord,
+  DocumentRecord,
+  DocumentAddress,
+  DocumentCreate,
+  DocumentPoint,
+  StorageWrite,
   EntryRecord,
   TaskRecord,
   SubmissionRecord,
 } from "@earendil-works/pi-durable";
+import { assertValidOp } from "@earendil-works/chord/delta";
 import type { Row } from "./db.ts";
 import type { JsonValue } from "@earendil-works/chord";
 import { check, integer, object, text, computeSha256 } from "../domain.ts";
@@ -21,6 +27,11 @@ export function assertJson(value: unknown): asserts value is JsonValue {
   for (const item of Object.values(value)) assertJson(item);
 }
 
+export function jsonObject(value: unknown): { [key: string]: JsonValue } {
+  assertJson(value);
+  return object(value) as { [key: string]: JsonValue };
+}
+
 /** JSON metadata is numeric; decimal-string parsing belongs only to SQL columns. */
 function jsonId(value: unknown): void {
   check(typeof value === "number" && Number.isSafeInteger(value) && value > 0, "Invalid JSON ID");
@@ -30,7 +41,7 @@ function jsonNumber(value: unknown): void {
   check(typeof value === "number" && Number.isFinite(value), "Invalid JSON number");
 }
 
-function jsonPoint(value: unknown): void {
+function jsonPoint(value: unknown): asserts value is number {
   check(
     typeof value === "number" && Number.isSafeInteger(value) && value >= 0,
     "Invalid JSON history point",
@@ -57,6 +68,35 @@ export function recordShape(value: unknown, type: string): void {
         if (key === "owner") jsonId(edge.taskId);
         else jsonPoint(edge.at);
       }
+
+    return;
+  }
+
+  if (type === "document") {
+    const s = object(v.scope);
+
+    check(["session", "conversation", "task"].includes(text(s.kind)), "Invalid document scope");
+    jsonPoint(v.createdAt);
+    if (v.retiredAt !== undefined) {
+      jsonPoint(v.retiredAt);
+      check(v.retiredAt >= v.createdAt, "Invalid document lifetime");
+    }
+    text(v.kind);
+    if (v.key !== undefined) text(v.key);
+
+    if (s.kind === "conversation") {
+      jsonId(s.conversationId);
+      check(v.history === "latest" || v.history === "rewindable", "Invalid document history");
+      check(
+        ["current", "initial", ...(v.history === "rewindable" ? ["asOf"] : [])].includes(
+          text(v.fork),
+        ),
+        "Invalid document fork",
+      );
+    } else {
+      absent(v, "history", "fork");
+      if (s.kind === "task") jsonId(s.taskId);
+    }
 
     return;
   }
@@ -194,8 +234,73 @@ export type Records = {
   entry: EntryRecord;
   task: TaskRecord<JsonValue, JsonValue, JsonValue>;
   submission: SubmissionRecord;
+  document: DocumentRecord;
 };
 export type RecordType = keyof Records;
+
+export function scope(scope: DocumentRecord["scope"]): [string, number] {
+  return [
+    scope.kind,
+    scope.kind === "conversation" ? scope.conversationId : scope.kind === "task" ? scope.taskId : 0,
+  ];
+}
+
+export function addressHash(address: DocumentAddress | DocumentCreate): string {
+  return computeSha256(
+    JSON.stringify([
+      address.kind,
+      scope(address.scope),
+      address.key === undefined ? null : address.key,
+    ]),
+  );
+}
+
+export function currentOnly(record: DocumentRecord): boolean {
+  return record.scope.kind !== "conversation" || record.history === "latest";
+}
+
+export function alive(record: DocumentRecord, at: DocumentPoint): boolean {
+  return at === "current"
+    ? record.retiredAt === undefined
+    : record.createdAt <= at && (record.retiredAt === undefined || record.retiredAt > at);
+}
+
+/** Validate the normalized batch before any SQL or object operation. */
+export function writeShape(write: StorageWrite): void {
+  switch (write.type) {
+    case "document.create":
+    case "document.copy":
+      recordShape({ ...write.record, createdAt: 0 }, "document");
+      check(
+        !("createdAt" in write.record) && !("retiredAt" in write.record),
+        "Storage stamps document lifetime",
+      );
+      if (write.type === "document.copy") {
+        jsonId(write.source.id);
+        if (write.source.at !== "current") jsonPoint(write.source.at);
+        return;
+      }
+      check(write.content.kind === "base", "Document creation requires a base");
+      break;
+    case "document.change":
+    case "document.retire":
+      jsonId(write.id);
+      if (write.type === "document.retire") return;
+      break;
+    default:
+      recordShape(write.value, write.type);
+      return;
+  }
+  jsonNumber(write.content.version);
+  if (write.content.kind === "base") jsonObject(write.content.value);
+  else {
+    check(
+      write.content.kind === "delta" && Array.isArray(write.content.ops),
+      "Invalid document content",
+    );
+    for (const op of write.content.ops) assertValidOp(op);
+  }
+}
 
 /** Shape policy is checked once; each SQL index is then compared with the decoded source. */
 export function validateRecord(value: unknown, row: Row, type: RecordType): void {
@@ -215,6 +320,25 @@ export function validateRecord(value: unknown, row: Row, type: RecordType): void
           (owner?.taskId ?? null) ===
             (row.owner_task_id === null ? null : integer(row.owner_task_id)),
         "Conversation owner mismatch",
+      );
+      break;
+    }
+
+    case "document": {
+      // recordShape established the document shape.
+      const record = v as unknown as DocumentRecord;
+      const [kind, owner] = scope(record.scope);
+
+      check(computeSha256(JSON.stringify(record.kind)) === row.kind_hash, "Document kind mismatch");
+      check(
+        kind === row.scope_kind && owner === integer(row.scope_owner),
+        "Document scope mismatch",
+      );
+      check(addressHash(record) === row.address_hash, "Document address mismatch");
+      check(
+        record.createdAt === integer(row.created_at) &&
+          (record.retiredAt ?? null) === (row.retired_at === null ? null : integer(row.retired_at)),
+        "Document lifetime mismatch",
       );
       break;
     }

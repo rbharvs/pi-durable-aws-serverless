@@ -15,7 +15,13 @@ import type { PayloadObjects } from "../../src/s3-payload.ts";
 import { BEGIN_READ } from "../../src/sql/db.ts";
 import { SqlStorage } from "../../src/sql/storage.ts";
 import { acceptedInput } from "../shared/input.ts";
-import { historyConnection, namespace, provider, type QueryHook } from "./postgres.ts";
+import {
+  OWNED_TABLES,
+  historyConnection,
+  namespace,
+  provider,
+  type QueryHook,
+} from "./postgres.ts";
 
 export { context, rootId };
 export const conversationId = (n: number) => idFromNumber<ConversationId>(n);
@@ -150,7 +156,8 @@ export async function historyFixture(label: string, options: HistoryFixtureOptio
       try {
         const orphan = await control.query(
           `SELECT p.payload_ref FROM ${table} p WHERE p.ns=$1
-           AND NOT EXISTS(SELECT 1 FROM records r WHERE r.ns=p.ns AND r.payload_ref=p.payload_ref)`,
+           AND NOT EXISTS(SELECT 1 FROM records r WHERE r.ns=p.ns AND r.payload_ref=p.payload_ref)
+           AND NOT EXISTS(SELECT 1 FROM revisions r WHERE r.ns=p.ns AND r.payload_ref=p.payload_ref)`,
           [owned.ns],
         );
 
@@ -161,7 +168,7 @@ export async function historyFixture(label: string, options: HistoryFixtureOptio
     }
 
     // Teardown never releases leases; it deletes only the exact owned namespace.
-    for (const table of ["inbox", "records", "inline_payloads", "s3_payloads", "harness"]) {
+    for (const table of OWNED_TABLES) {
       try {
         await control.query(`DELETE FROM ${table} WHERE ns=$1`, [owned.ns]);
       } catch (error) {
@@ -247,7 +254,7 @@ export async function historyFixture(label: string, options: HistoryFixtureOptio
         try {
           const result: Record<string, unknown> = {};
 
-          for (const table of ["harness", "records", "inline_payloads", "s3_payloads"])
+          for (const table of ["harness", "records", "revisions", "inline_payloads", "s3_payloads"])
             result[table] = await control.query(`SELECT * FROM ${table} WHERE ns=$1 ORDER BY 1,2`, [
               owned.ns,
             ]);

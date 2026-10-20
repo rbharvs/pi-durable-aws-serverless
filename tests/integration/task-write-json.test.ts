@@ -1,6 +1,6 @@
 import { expect, it } from "vitest";
 import { StorageRequestError } from "@earendil-works/pi-durable";
-import type { HistoryWrite } from "../../src/write-bounds.ts";
+import type { StorageWrite } from "@earendil-works/pi-durable";
 import { context, dataEntry, historyFixture, memoryObjects, queryGate } from "./history-support.ts";
 import { submission, submissionId, task, taskId } from "./task-support.ts";
 
@@ -44,7 +44,7 @@ it("uses the serialized numeric identity and flags for indexes and allocation, n
         background: Object(false),
         abortRequested: Object(false),
       },
-    } as HistoryWrite;
+    } as StorageWrite;
     await f.storage.commit([write], context);
     expect(await f.storage.mintId()).toBe(21);
     const expected = { ...task().value, kind: "boxed" };
@@ -80,11 +80,11 @@ it("normalizes omitted, nonfinite and toJSON-capable data to the exact stored JS
         state: { status: "terminal", outcome: { status: "completed", result: NaN } },
         startedAt: undefined,
       },
-    } as unknown as HistoryWrite;
+    } as unknown as StorageWrite;
     const requested = {
       ...submission(),
       value: { ...submission().value, requestId: new Date("2020-01-01T00:00:00Z") },
-    } as unknown as HistoryWrite;
+    } as unknown as StorageWrite;
     await f.storage.commit([write, requested], context);
     const cold = await f.cold();
     expect(await cold.task(taskId(20), context)).toEqual({

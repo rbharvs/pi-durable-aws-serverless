@@ -7,7 +7,7 @@ import {
 } from "@earendil-works/pi-durable";
 import { PayloadCorrupt } from "../../src/sql/payloads.ts";
 import { BEGIN_WRITE } from "../../src/sql/db.ts";
-import type { HistoryWrite } from "../../src/write-bounds.ts";
+import type { StorageWrite } from "@earendil-works/pi-durable";
 import { context, dataEntry, entry, historyFixture, memoryObjects } from "./history-support.ts";
 import { submission, submissionId, task, taskId } from "./task-support.ts";
 
@@ -177,7 +177,7 @@ for (const { type, name, patch } of corruptions)
   it(`classifies stored ${type} ${name} as PayloadCorrupt, never a caller request error`, async () => {
     const f = await historyFixture("state_corrupt");
     try {
-      const write: HistoryWrite =
+      const write: StorageWrite =
         type === "task" ? task(20) : type === "submission" ? submission(20) : entry(20);
       await f.storage.commit([write], context);
       await f.control.query("UPDATE inline_payloads SET json=$2 WHERE ns=$1", [
@@ -215,7 +215,7 @@ for (const { type, name, patch } of corruptions.filter(({ name }) =>
     try {
       const healthy = type === "task" ? task(20) : submission(20);
       const bad = type === "task" ? task(21) : submission(21);
-      const write = { ...bad, value: { ...bad.value, ...patch } } as HistoryWrite;
+      const write = { ...bad, value: { ...bad.value, ...patch } } as StorageWrite;
       await f.storage.commit([healthy], context);
       const before = await f.snapshot();
       f.trace.length = 0;

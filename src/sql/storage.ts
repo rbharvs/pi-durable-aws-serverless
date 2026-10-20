@@ -1,8 +1,19 @@
 import type { Context } from "@earendil-works/chord";
+import { apply, assertValidOp, type Op } from "@earendil-works/chord/delta";
 import { StorageRequestError } from "@earendil-works/pi-durable";
 import { idFromNumber, seqFromNumber } from "../ids.ts";
 import { scanStart, nextCursor } from "./scan.ts";
 import type {
+  Storage,
+  StorageWrite,
+  DocumentId,
+  DocumentRecord,
+  DocumentAddress,
+  DocumentCreate,
+  DocumentContent,
+  DocumentPoint,
+  DocumentQuery,
+  StoredDocument,
   Seq,
   Id,
   ConversationId,
@@ -31,16 +42,35 @@ import {
   type PayloadInput,
   type PayloadPlan,
 } from "./payloads.ts";
-import { assertEnvelope } from "../payload.ts";
+import { assertEnvelope, EnvelopeRejected } from "../payload.ts";
+import { LIMITS } from "../limits.ts";
 import type { PayloadObjects } from "../s3-payload.ts";
 import type { Lease } from "../lease.ts";
-import { freezeWrites as freeze, storedHighWater, type HistoryWrite } from "../write-bounds.ts";
-import { recordShape, validateRecord, type RecordType, type Records } from "./records.ts";
+import { freezeWrites as freeze, storedHighWater, writeId } from "../write-bounds.ts";
+import {
+  writeShape,
+  validateRecord,
+  jsonObject,
+  assertJson,
+  scope,
+  addressHash,
+  currentOnly,
+  alive,
+  type RecordType,
+  type Records,
+} from "./records.ts";
 import { check, integer, computeSha256, Mutex, sleep } from "../domain.ts";
 
 type StoredTask = Records["task"];
 
 type Mutation = { sql: string; params: SqlValue[]; payload: PayloadInput };
+
+type DocumentAction = {
+  create?: DocumentCreate;
+  copy?: { id: DocumentId; at: DocumentPoint };
+  content?: DocumentContent;
+  retire: boolean;
+};
 
 type AdapterState = "open" | "failed" | "closed";
 
@@ -67,7 +97,7 @@ function page<T extends { id: Id<string> }>(
 }
 
 /** Native shared SQL. All connection use is private and serialized by one FIFO gate. */
-export class SqlStorage {
+export class SqlStorage implements Storage {
   private readonly gate = new Mutex();
   private state: AdapterState = "open";
   private readonly payloads: Payloads;
@@ -505,7 +535,170 @@ export class SqlStorage {
     });
   }
 
-  private recordMutation(write: HistoryWrite, seq: Seq, previous?: Row): Mutation {
+  private async find(
+    address: DocumentAddress,
+    at: DocumentPoint,
+  ): Promise<DocumentRecord | undefined> {
+    if (at !== "current") assertSafeInteger(at);
+    assertSafeInteger(scope(address.scope)[1]);
+    const rows = await this.q(
+      `SELECT ${projection("records")} FROM records WHERE ns=$1 AND type='document' AND address_hash=$2 AND created_at<=$3 AND (retired_at IS NULL OR retired_at>$4) ORDER BY created_at DESC`,
+      [
+        this.lease.ns,
+        addressHash(address),
+        at === "current" ? Number.MAX_SAFE_INTEGER : at,
+        at === "current" ? Number.MAX_SAFE_INTEGER : at,
+      ],
+    );
+
+    for (const row of rows) {
+      const record = await this.decode(row, "document");
+
+      if (
+        record.kind === address.kind &&
+        record.key === address.key &&
+        JSON.stringify(scope(record.scope)) === JSON.stringify(scope(address.scope))
+      )
+        return record;
+    }
+
+    return undefined;
+  }
+
+  findDocument(
+    address: DocumentAddress,
+    at: DocumentPoint,
+    _context: Context,
+  ): Promise<DocumentRecord | undefined> {
+    const detached = structuredClone(address);
+    return this.run(() => this.find(detached, at));
+  }
+
+  scanDocuments(
+    query: DocumentQuery,
+    limit: number,
+    cursor: Cursor | undefined,
+    _context: Context,
+  ): Promise<Page<DocumentRecord, Cursor>> {
+    const detached = structuredClone(query);
+    const position =
+      cursor === undefined ? undefined : { after: cursor.after, order: cursor.order };
+    return this.run(async () => {
+      const [kind, owner] = scope(detached.scope);
+      assertSafeInteger(owner);
+      const at = detached.at === "current" ? Number.MAX_SAFE_INTEGER : detached.at;
+      assertSafeInteger(at);
+      const clauses = [
+        "scope_kind=$3",
+        "scope_owner=$4",
+        "created_at<=$5",
+        "(retired_at IS NULL OR retired_at>$5)",
+      ];
+      const params: SqlValue[] = [kind, owner, at];
+
+      if (detached.kind !== undefined) {
+        params.push(computeSha256(JSON.stringify(detached.kind)));
+        clauses.push("kind_hash=$6");
+      }
+
+      return this.scan("document", clauses, params, limit, position);
+    });
+  }
+
+  private async materialize(
+    id: DocumentId,
+    at: DocumentPoint,
+  ): Promise<StoredDocument | undefined> {
+    if (at !== "current") assertSafeInteger(at);
+    const record = await this.get("document", id);
+
+    if (!record) return undefined;
+    if (at !== "current" && currentOnly(record))
+      throw new StorageRequestError(`Document ${id} does not retain historical content`);
+    if (!alive(record, at)) return undefined;
+
+    try {
+      const upper = at === "current" ? Number.MAX_SAFE_INTEGER : at;
+      const base = (
+        await this.q(
+          `SELECT ${projection("revisions")} FROM revisions WHERE ns=$1 AND document_id=$2 AND kind='base' AND seq<=$3 ORDER BY seq DESC LIMIT 1`,
+          [this.lease.ns, id, upper],
+        )
+      )[0];
+
+      check(base, `Document ${id} is missing a required base`);
+
+      const version = base.version;
+      check(typeof version === "number" && Number.isFinite(version), "Invalid document version");
+      let value = jsonObject(
+        JSON.parse(
+          await this.payloads.decode(base, `${this.lease.ns}/revisions/${id}/${String(base.seq)}`),
+        ),
+      );
+      const tail = await this.q(
+        `SELECT ${projection("revisions")} FROM revisions WHERE ns=$1 AND document_id=$2 AND seq>$3 AND seq<=$4 ORDER BY seq`,
+        [this.lease.ns, id, integer(base.seq), upper],
+      );
+
+      for (const revision of tail) {
+        check(
+          revision.kind === "delta" && revision.version === version,
+          `Document ${id} crosses a stored version boundary without a base`,
+        );
+
+        const ops: unknown = JSON.parse(
+          await this.payloads.decode(
+            revision,
+            `${this.lease.ns}/revisions/${id}/${String(revision.seq)}`,
+          ),
+        );
+
+        check(Array.isArray(ops), "Invalid delta");
+        assertJson(ops);
+
+        const validated: Op[] = [];
+
+        for (const op of ops) {
+          assertValidOp(op);
+          validated.push(op);
+        }
+
+        // Parsed/validated delta data preserves JSON; only root replacement can change
+        // the document container. Check each revision without rewalking its unchanged tree.
+        value = apply(value, validated);
+        check(
+          typeof value === "object" && value !== null && !Array.isArray(value),
+          "Invalid document value",
+        );
+      }
+
+      return {
+        record,
+        version,
+        value,
+        deltasSinceBase: tail.length,
+      };
+    } catch (error) {
+      if (error instanceof PayloadCorrupt) throw error;
+      throw new PayloadCorrupt(`${this.lease.ns}/revisions/${id}`, error);
+    }
+  }
+
+  document(
+    id: DocumentId,
+    at: DocumentPoint,
+    _context: Context,
+  ): Promise<StoredDocument | undefined> {
+    return this.run(() => this.materialize(id, at));
+  }
+
+  private recordMutation(
+    write:
+      | Extract<StorageWrite, { type: "conversation" | "entry" | "task" | "submission" }>
+      | { type: "document"; value: DocumentRecord },
+    seq: Seq,
+    previous?: Row,
+  ): Mutation {
     const columns = [
       "ns",
       "id",
@@ -531,10 +724,12 @@ export class SqlStorage {
       this.lease.ns,
       write.value.id,
       write.type,
-      write.type !== "conversation" ? write.value.conversationId : null,
+      write.type !== "conversation" && write.type !== "document"
+        ? write.value.conversationId
+        : null,
       write.type === "conversation" ? (write.value.owner?.conversationId ?? null) : null,
       write.type === "conversation" ? (write.value.owner?.taskId ?? null) : null,
-      write.type === "entry" || write.type === "task"
+      write.type === "entry" || write.type === "task" || write.type === "document"
         ? computeSha256(JSON.stringify(write.value.kind))
         : null,
       write.type === "task"
@@ -549,16 +744,16 @@ export class SqlStorage {
         : null,
       write.type === "entry" ? write.value.head !== undefined : null,
       write.type === "entry" ? seq : null,
-      null,
-      null,
-      null,
-      null,
-      null,
+      write.type === "document" ? addressHash(write.value) : null,
+      write.type === "document" ? scope(write.value.scope)[0] : null,
+      write.type === "document" ? scope(write.value.scope)[1] : null,
+      write.type === "document" ? write.value.createdAt : null,
+      write.type === "document" ? (write.value.retiredAt ?? null) : null,
     ];
 
     return {
       sql: `INSERT INTO records(${columns.join(",")}) VALUES(${columns.map((_, i) => "$" + (i + 1)).join(",")})${
-        write.type === "task" || write.type === "submission"
+        write.type === "task" || write.type === "submission" || write.type === "document"
           ? " ON CONFLICT(ns,id) DO UPDATE SET " +
             columns
               .slice(3)
@@ -577,19 +772,83 @@ export class SqlStorage {
     };
   }
 
-  private prepare(writes: readonly HistoryWrite[], seq: Seq): Promise<Mutation[]> {
-    return this.validateRecordWrites(writes, seq);
+  private actions(writes: readonly StorageWrite[]): Map<DocumentId, DocumentAction> {
+    const actions = new Map<DocumentId, DocumentAction>();
+
+    for (const write of writes) {
+      switch (write.type) {
+        case "conversation":
+        case "entry":
+        case "task":
+        case "submission":
+          continue;
+
+        case "document.create":
+        case "document.copy":
+        case "document.change":
+        case "document.retire":
+          break;
+
+        default: {
+          const unexpected: never = write;
+
+          throw new Error(`Unsupported write: ${String(unexpected)}`);
+        }
+      }
+
+      const id = idFromNumber<DocumentId>(writeId(write));
+      let action = actions.get(id);
+
+      if (!action) {
+        action = { retire: false };
+        actions.set(id, action);
+      }
+
+      if (write.type === "document.retire") {
+        check(!action.retire, `Document ${id} is retired more than once`);
+        action.retire = true;
+      } else {
+        check(
+          !action.content && !action.copy && !action.create,
+          `Document ${id} has more than one content command`,
+        );
+        if (write.type === "document.create" || write.type === "document.copy")
+          action.create = write.record;
+        if (write.type === "document.copy") action.copy = write.source;
+        else action.content = write.content;
+      }
+    }
+
+    return actions;
   }
 
-  /** One bounded ownership query in the repeatable snapshot, before publication. */
+  private async prepare(writes: readonly StorageWrite[], seq: Seq): Promise<Mutation[]> {
+    const mutations: Mutation[] = [];
+    let logicalBytes = 0;
+    const addMutation = (mutation: Mutation): void => {
+      // Count each serialized owner payload once, including resolved copies and repeated writes.
+      // Reject incrementally before retaining the rest of the batch or publishing any objects.
+      logicalBytes += Buffer.byteLength(mutation.payload.json);
+      if (logicalBytes > LIMITS.maxLogicalCommitBytes)
+        throw new EnvelopeRejected("Resolved logical commit exceeds 32 MiB bound");
+      mutations.push(mutation);
+    };
+    const existing = await this.validateRecordWrites(writes, seq, addMutation);
+    const actions = this.actions(writes);
+    const documents = await this.validateDocumentActions(actions, seq);
+    await this.planDocumentActions(actions, documents, existing, seq, addMutation);
+    return mutations;
+  }
+
+  /** One bounded ownership query in the same snapshot as document validation and copy reads. */
   private async validateRecordWrites(
-    writes: readonly HistoryWrite[],
+    writes: readonly StorageWrite[],
     seq: Seq,
-  ): Promise<Mutation[]> {
-    const ids = [...new Set(writes.map((write) => write.value.id))];
+    addMutation: (mutation: Mutation) => void,
+  ): Promise<Map<number, Row>> {
+    const ids = [...new Set(writes.map(writeId))];
     const existing = new Map<number, Row>();
     if (ids.length > 0) {
-      // freezeWrites allows at most 999 numeric ID binds, plus the namespace.
       const placeholders = ids.map((_, i) => `$${i + 2}`).join(",");
       const rows = await this.q(
         `SELECT ${referenceProjection("records")} FROM records WHERE ns=$1 AND id IN (${placeholders}) ORDER BY id`,
@@ -598,26 +857,156 @@ export class SqlStorage {
       for (const row of rows) existing.set(integer(row.id), row);
     }
     const claimed = new Map<number, RecordType>();
-    return writes.map((write) => {
-      const id = write.value.id;
-      const prior = existing.get(id);
-      const earlier = claimed.get(id);
-      if (write.type === "conversation" || write.type === "entry") {
-        check(!earlier, `ID ${id} is written more than once`);
-        check(!prior, `ID ${id} already belongs to ${String(prior?.type)}`);
+    for (const write of writes) {
+      if (write.type === "document.change" || write.type === "document.retire") {
+        const prior = existing.get(write.id);
+        check(!prior || prior.type === "document", `ID ${write.id} belongs to another record type`);
+        continue;
+      }
+      const document = write.type === "document.create" || write.type === "document.copy";
+      const record = document ? write.record : write.value;
+      const type = document ? "document" : write.type;
+      const prior = existing.get(record.id);
+      const earlier = claimed.get(record.id);
+      if (type === "conversation" || type === "entry" || type === "document") {
+        check(!earlier, `ID ${record.id} is written more than once`);
+        check(!prior, `ID ${record.id} already belongs to ${String(prior?.type)}`);
       } else {
-        check(!earlier || earlier === write.type, `ID ${id} is written as two record types`);
+        check(!earlier || earlier === type, `ID ${record.id} is written as two record types`);
         check(
-          !prior || prior.type === write.type,
-          `ID ${id} already belongs to ${String(prior?.type)}`,
+          !prior || prior.type === type,
+          `ID ${record.id} already belongs to ${String(prior?.type)}`,
         );
       }
-      claimed.set(id, write.type);
-      return this.recordMutation(write, seq, prior);
-    });
+      claimed.set(record.id, type);
+      if (!document) addMutation(this.recordMutation(write, seq, prior));
+    }
+    return existing;
   }
 
-  private async validateSnapshot(frozen: readonly HistoryWrite[], seq: Seq): Promise<Mutation[]> {
+  /** Address liveness and lifetime validation share one snapshot with copy planning. */
+  private async validateDocumentActions(
+    actions: Map<DocumentId, DocumentAction>,
+    seq: Seq,
+  ): Promise<Map<DocumentId, DocumentRecord>> {
+    const liveCounts = new Map<string, number>();
+    const documents = new Map<DocumentId, DocumentRecord>();
+
+    for (const [id, action] of actions) {
+      check(
+        !action.copy || !actions.has(action.copy.id),
+        `Document copy ${id} source is changed in the copy batch`,
+      );
+
+      // The ownership query already rejected creation over any stored ID.
+      const existing = action.create ? undefined : await this.get("document", id);
+
+      check(action.create || existing, `Unknown document: ${id}`);
+      check(existing?.retiredAt === undefined, `Document ${id} is retired`);
+
+      if (action.content?.kind === "delta") {
+        const previous = (
+          await this.q(
+            "SELECT version FROM revisions WHERE ns=$1 AND document_id=$2 ORDER BY seq DESC LIMIT 1",
+            [this.lease.ns, id],
+          )
+        )[0];
+
+        check(previous, `Document ${id} delta has no base`);
+        check(
+          previous.version === action.content.version,
+          `Document ${id} version transition requires a base`,
+        );
+      }
+
+      const record: DocumentRecord = action.create
+        ? {
+            ...action.create,
+            createdAt: seq,
+            ...(action.retire ? { retiredAt: seq } : {}),
+          }
+        : existing!;
+
+      documents.set(id, record);
+
+      const key = addressHash(record);
+      let live = liveCounts.get(key);
+
+      // A stored incarnation that is not retired is the current one at its address.
+      if (live === undefined) live = existing || (await this.find(record, "current")) ? 1 : 0;
+      if (action.retire && existing) live--;
+      if (action.create && !action.retire) live++;
+      liveCounts.set(key, live);
+    }
+
+    for (const count of liveCounts.values())
+      check(count <= 1, "Document address already has a current incarnation");
+
+    return documents;
+  }
+
+  private async planDocumentActions(
+    actions: Map<DocumentId, DocumentAction>,
+    documents: Map<DocumentId, DocumentRecord>,
+    existing: Map<number, Row>,
+    seq: Seq,
+    addMutation: (mutation: Mutation) => void,
+  ): Promise<void> {
+    for (const [id, action] of actions) {
+      let content = action.content;
+      const record = documents.get(id)!;
+
+      if (action.copy) {
+        try {
+          const source = await this.materialize(action.copy.id, action.copy.at);
+
+          check(
+            source &&
+              source.record.scope.kind === "conversation" &&
+              record.scope.kind === "conversation" &&
+              source.record.kind === record.kind &&
+              source.record.key === record.key &&
+              source.record.history === record.history &&
+              source.record.fork === record.fork,
+            "Copy source mismatch",
+          );
+          content = {
+            kind: "base",
+            version: source.version,
+            value: source.value,
+          };
+        } catch (error) {
+          throw new Error(`Document copy ${id} was rejected`, { cause: error });
+        }
+      }
+
+      if (action.create || action.retire)
+        addMutation(
+          this.recordMutation(
+            {
+              type: "document",
+              value: action.retire ? { ...record, retiredAt: seq } : record,
+            },
+            seq,
+            existing.get(id),
+          ),
+        );
+      if (content)
+        addMutation({
+          sql: `INSERT INTO revisions(ns,document_id,seq,kind,version,${PAYLOAD_COLUMNS.join(",")}) VALUES($1,$2,$3,$4,$5,${PAYLOAD_COLUMNS.map((_, i) => `$${i + 6}`).join(",")})`,
+          params: [this.lease.ns, id, seq, content.kind, content.version],
+          payload: {
+            table: "revisions",
+            ns: this.lease.ns,
+            id,
+            json: JSON.stringify(content.kind === "base" ? content.value : content.ops),
+          },
+        });
+      // Retain old revisions rather than an unbounded DELETE. Reads select the most recent base.
+    }
+  }
+
+  private async validateSnapshot(frozen: readonly StorageWrite[], seq: Seq): Promise<Mutation[]> {
     // One snapshot plus the next_seq fence protects all prepared results.
     // Uploads never run inside a DB transaction.
     try {
@@ -715,12 +1104,12 @@ export class SqlStorage {
   }
 
   /** Detach and validate at invocation, before the serialized operation's first await. */
-  async commit(writes: readonly HistoryWrite[], _context: Context): Promise<Seq> {
+  async commit(writes: readonly StorageWrite[], _context: Context): Promise<Seq> {
     const frozen = freeze(writes);
     for (const write of frozen) {
       try {
         // freeze() normalized the exact JSON used by index/ID accounting and publication.
-        recordShape(write.value, write.type);
+        writeShape(write);
       } catch (error) {
         throw new StorageRequestError(`Invalid ${String(write?.type)} write: ${String(error)}`);
       }
