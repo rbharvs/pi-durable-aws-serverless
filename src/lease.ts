@@ -2,6 +2,9 @@ import type { HarnessId, OwnerToken, Epoch } from "./domain.ts";
 
 export const LEASE_MARGIN_MS = 2000;
 
+/** Stop admitting before the invocation deadline to join Pi and close storage. */
+export const CLOSE_MARGIN_MS = 5000;
+
 /** Adapter-internal issuance; only successful authority claims create leases. */
 class IssuedLease {
   // oxlint-disable-next-line no-unused-private-class-members -- Private field supplies nominal lease identity.

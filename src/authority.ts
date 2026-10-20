@@ -58,9 +58,16 @@ export interface Authority {
   close(): Promise<void>;
 }
 
-/** Internal pairing of one authority schema and its fenced native Storage. */
+/** Worker ownership and receipt admission, without receipt creation. */
+export type WorkerAuthority = Pick<
+  Authority,
+  "claim" | "received" | "markAdmitted" | "hasWork" | "release" | "close"
+>;
+
+/** Pairing of one authority schema and its fenced native Storage. */
 export interface Backend {
   connectAuthority(): Promise<Authority>;
+  /** Returned Storage.close must tolerate repeated calls, including after failed Harness.open. */
   openStorage(lease: Lease): Promise<Storage>;
 }
 
