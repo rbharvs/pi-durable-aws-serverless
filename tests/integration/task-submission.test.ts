@@ -53,8 +53,9 @@ it("does not confuse a hash candidate with the exact logical submission request"
   const f = await historyFixture("request_candidate", {
     hook: async (phase, sql, params) => {
       // Simulate a hash collision at the candidate selector, without corrupting either stored envelope.
-      if (phase === "before" && sql.includes("AND request_hash=$3"))
+      if (phase === "before" && sql.includes("AND request_hash=$3")) {
         (params as unknown[])[2] = computeSha256(JSON.stringify("other"));
+      }
     },
   });
   try {
@@ -103,7 +104,7 @@ it("rolls back task, submission and entry together when publication fails midway
         params[2] === "submission"
       ) {
         armed = false;
-        throw Error("publication failed");
+        throw new Error("publication failed");
       }
     },
   });
@@ -122,14 +123,14 @@ it("rolls back task, submission and entry together when publication fails midway
   }
 });
 
-const outcomes: Extract<StoredTask["state"], { status: "terminal" }>["outcome"][] = [
+const outcomes: Array<Extract<StoredTask["state"], { status: "terminal" }>["outcome"]> = [
   { status: "completed", result: { answer: 42 } },
   { status: "failed", error: { message: "expected", detail: [1, null] }, result: false },
   { status: "aborted", reason: "cancelled", result: [] },
   { status: "orphaned", reason: "definition unavailable" },
   { status: "faulted", error: { message: "contract", detail: { failed: true } } },
 ];
-const states: StoredTask["state"][] = [
+const states: Array<StoredTask["state"]> = [
   { status: "pending", checkpoint: { next: 1 } },
   { status: "running", checkpoint: [true, null] },
   { status: "waiting", checkpoint: null, on: [taskId(50)], policy: "allSettled" },
@@ -140,7 +141,7 @@ const states: StoredTask["state"][] = [
   ]),
 ];
 
-for (const [i, state] of states.entries())
+for (const [i, state] of states.entries()) {
   it(`replaces and cold-reads Pi task state ${state.status}/${i}, preserving metadata and flags`, async () => {
     const f = await historyFixture("task_state");
     try {
@@ -176,14 +177,16 @@ for (const [i, state] of states.entries())
         { kind: "other" },
         { background: false },
         { abortRequested: false },
-      ])
+      ]) {
         expect(
           (await cold.scanTasks({ ...query, ...mismatch }, 10, undefined, context)).items,
         ).toEqual([]);
+      }
     } finally {
       await f.finish();
     }
   });
+}
 
 const submissionStates: SubmissionRecord[] = [
   { ...submission().value },
@@ -195,7 +198,7 @@ const submissionStates: SubmissionRecord[] = [
   { ...submission().value, type: "write", status: "done", entry: entryId(40) },
   { ...submission().value, type: "write", status: "unanswered", reason: "failed", detail: false },
 ];
-for (const [i, state] of submissionStates.entries())
+for (const [i, state] of submissionStates.entries()) {
   it(`replaces and cold-reads Pi submission state ${state.type}/${state.status}/${i}`, async () => {
     const f = await historyFixture("submission_state");
     try {
@@ -224,6 +227,7 @@ for (const [i, state] of submissionStates.entries())
       await f.finish();
     }
   });
+}
 
 it("scans tasks and submissions in both orders across cursors, without borrowing a tenant's records", async () => {
   const f = await historyFixture("record_pages");
@@ -300,11 +304,11 @@ it("detaches replacement batches, query flags and cursors before waiting for the
   }
 });
 
-for (const first of [conversation(20), entry(20), task(20), submission(20)])
+for (const first of [conversation(20), entry(20), task(20), submission(20)]) {
   for (const second of [conversation(20), entry(20), task(20), submission(20)].filter(
     (w) => w.type !== first.type,
-  ))
-    for (const existing of [true, false])
+  )) {
+    for (const existing of [true, false]) {
       it(`rejects ${first.type}/${second.type} ID collision atomically (${existing ? "stored" : "batch"})`, async () => {
         const f = await historyFixture("record_collision");
         try {
@@ -320,3 +324,6 @@ for (const first of [conversation(20), entry(20), task(20), submission(20)])
           await f.finish();
         }
       });
+    }
+  }
+}

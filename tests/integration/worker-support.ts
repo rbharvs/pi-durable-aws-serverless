@@ -15,8 +15,8 @@ export const deferred = () => Promise.withResolvers<void>();
 export function modelWork(hold = false) {
   const models = createModels();
   models.setProvider(fauxProvider({ models: [{ id: "faux-1", contextWindow: 8000000 }] }).provider);
-  const started = deferred(),
-    finish = deferred();
+  const started = deferred();
+  const finish = deferred();
   models.streamSimple = (_model, _transcript, options) => {
     const stream = new AssistantMessageEventStream();
     started.resolve();
@@ -47,11 +47,11 @@ export function modelWork(hold = false) {
 /** Real PG backend and Harness; only immutable object bytes and the model live in memory. */
 export async function workerFixture(label: string, hold = false, hook: QueryHook = async () => {}) {
   const f = await namespace(label);
-  const objects = objectFixture(),
-    work = modelWork(hold);
-  const hints: HarnessId[] = [],
-    events: Record<string, unknown>[] = [],
-    trace: Query[] = [];
+  const objects = objectFixture();
+  const work = modelWork(hold);
+  const hints: HarnessId[] = [];
+  const events: Array<Record<string, unknown>> = [];
+  const trace: Query[] = [];
   const backend = createSqlBackend(
     {
       ...provider,

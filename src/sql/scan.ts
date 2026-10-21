@@ -4,10 +4,10 @@ import { StorageRequestError } from "@earendil-works/pi-durable";
 import type { Id, ScanOrder } from "@earendil-works/pi-durable";
 
 /** Where a built-in storage scan starts: its order and the last ID a previous page returned. */
-export type ScanStart = {
+export interface ScanStart {
   readonly order: ScanOrder;
   readonly after: number | undefined;
-};
+}
 
 /**
  * Resolve a scan's order and position. A cursor continues in the order it was created with, whether the query repeats
@@ -27,8 +27,9 @@ export function scanStart(
 
   const { after, order: stored } = cursor;
 
-  if (typeof after !== "number" || !Number.isSafeInteger(after))
+  if (typeof after !== "number" || !Number.isSafeInteger(after)) {
     throw new StorageRequestError("Invalid storage cursor");
+  }
 
   if (stored !== undefined && stored !== "ascending" && stored !== "descending") {
     throw new StorageRequestError("Invalid storage cursor");

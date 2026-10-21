@@ -43,16 +43,16 @@ export async function bundleGraphs(
 }
 
 const categories = {
-  execution: (p: string) =>
-    /^src\/(runtime|memory)\.ts$/.test(p) ||
-    /^src\/sql\/(storage|backend)\.ts$/.test(p) ||
-    /@earendil-works\/pi-durable\/dist\/(harness|storage)\//.test(p),
-  s3: (p: string) => p === "src/aws/s3.ts" || p.includes("@aws-sdk/client-s3/"),
-  dispatcher: (p: string) => p === "src/aws/dispatch.ts",
-  sql: (p: string) => p.startsWith("src/sql/") || p.includes("node_modules/pg/"),
-  aws: (p: string) => p.startsWith("src/aws/") || p.includes("@aws-sdk/"),
+  execution: (path: string) =>
+    /^src\/(runtime|memory)\.ts$/.test(path) ||
+    /^src\/sql\/(storage|backend)\.ts$/.test(path) ||
+    /@earendil-works\/pi-durable\/dist\/(harness|storage)\//.test(path),
+  s3: (path: string) => path === "src/aws/s3.ts" || path.includes("@aws-sdk/client-s3/"),
+  dispatcher: (path: string) => path === "src/aws/dispatch.ts",
+  sql: (path: string) => path.startsWith("src/sql/") || path.includes("node_modules/pg/"),
+  aws: (path: string) => path.startsWith("src/aws/") || path.includes("@aws-sdk/"),
 };
-const boundaries: Record<Root, (keyof typeof categories)[]> = {
+const boundaries: Record<Root, Array<keyof typeof categories>> = {
   worker: ["dispatcher"],
   api: ["execution"],
   reconciler: ["execution", "s3"],
@@ -68,7 +68,8 @@ export function assertGraphBoundaries(root: Root, graph: Graph): void {
   );
   for (const category of boundaries[root]) {
     const forbidden = contributing.filter(categories[category]);
-    if (forbidden.length)
-      throw Error(`Forbidden ${root} dependencies (${category}): ${forbidden.join(", ")}`);
+    if (forbidden.length) {
+      throw new Error(`Forbidden ${root} dependencies (${category}): ${forbidden.join(", ")}`);
+    }
   }
 }

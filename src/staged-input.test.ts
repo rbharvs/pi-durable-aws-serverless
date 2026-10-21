@@ -40,17 +40,19 @@ for (const [name, fields] of [
   ["nonfinite bytes", { bytes: Infinity }],
   ["raw overflow", { bytes: MAX_INPUT_BYTES + 1 }],
   ["extra field", { bucket: "caller-selected" }],
-] as const)
+] as const) {
   it(`rejects staged reference ${name}`, () => {
     expect(() => parseCommand({ ...reference, ...fields }, ns)).toThrow();
   });
+}
 
-for (const name of ["input.json", ".hidden", "part..json", "..."])
+for (const name of ["input.json", ".hidden", "part..json", "..."]) {
   it(`accepts the ordinary staging filename ${name}`, () => {
     const command = { ...reference, key: `in/${ns}/${name}` };
 
     expect(parseCommand(command, ns)).toEqual(command);
   });
+}
 
 it("keeps the 6 MiB decoded-image bound separate from the aggregate JSON bound", () => {
   const image = {

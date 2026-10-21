@@ -1,8 +1,10 @@
 import pg from "pg";
 import { check, errorCode } from "../domain.ts";
 
+/** Connection acquisition and provider-specific evidence that a transaction definitely aborted. */
 export interface SqlProvider {
   connect(): Promise<pg.Client>;
+  /** Ambiguous transport/commit failures must return false, not authorize a write retry. */
   isRetryableAbort(error: unknown): boolean;
 }
 
@@ -36,8 +38,9 @@ export async function connect(config: pg.ClientConfig, schema: string): Promise<
   }
 }
 
-export const isPostgresAbort = (e: unknown): boolean =>
-  errorCode(e) === "40001" || errorCode(e) === "40P01";
+export function isPostgresAbort(e: unknown): boolean {
+  return errorCode(e) === "40001" || errorCode(e) === "40P01";
+}
 
 export function postgresProvider(port: number, password: string, schema: string): SqlProvider {
   check(Number.isInteger(port) && port > 0 && port < 65536, "Invalid local port");

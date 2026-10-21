@@ -9,8 +9,8 @@ export async function memoryFixture(
 ): Promise<ContractFixture & { advance(ms: number): void; time(): number }> {
   let time = 100000;
   const backend = createMemoryBackend({ now: () => time });
-  const authority = await backend.connectAuthority(),
-    ns = harnessId("test");
+  const authority = await backend.connectAuthority();
+  const ns = harnessId("test");
   const seed = (await authority.receive(ns, requestId("seed"), input)).item;
   const claim = await authority.claim(ns, 45000);
   check(claim.kind === "claimed" && seed.kind === "received", "fixture claim");

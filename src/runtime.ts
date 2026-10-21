@@ -9,7 +9,8 @@ import type { HarnessId } from "./domain.ts";
 import type { Events } from "./dispatch.ts";
 import { cleanup } from "./diagnostics.ts";
 
-export type RuntimeOptions = {
+/** Caller-owned backend and Pi configuration used to acquire fresh per-operation resources. */
+export interface RuntimeOptions {
   readonly backend: Backend;
   readonly harnessOptions: HarnessOptions;
   /** Fresh namespace-scoped immutable payload reader, closed after each resolution. */
@@ -18,11 +19,18 @@ export type RuntimeOptions = {
   ) => Pick<PayloadObjects, "get"> & { close(): void | Promise<void> };
   readonly event: Events;
   readonly rootAgent: AgentChange;
-};
+}
 
+/**
+ * Wires receipt resolution and leased Pi sessions without acquiring resources at construction.
+ * Resolution closes its object reader even on failure. A successful open transfers the Harness
+ * to the worker; a failed open attempts to close the Harness or Storage before rejecting.
+ */
 export function runtimeDependencies(options: RuntimeOptions) {
   const { backend, harnessOptions, rootAgent } = options;
-  const event: Events = (name, fields) => options.event(name, fields);
+  const event: Events = (name, fields) => {
+    options.event(name, fields);
+  };
   return {
     connectAuthority: () => backend.connectAuthority(),
     resolve: async (item) => {

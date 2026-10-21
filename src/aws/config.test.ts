@@ -31,8 +31,9 @@ it("signs offline admin tokens for the explicit host, region, action, and finite
 });
 
 it("validates explicit configuration, resource bounds, host scope, and SQL identifiers before clients", () => {
-  for (const value of [undefined, "", "eu-west-1.*", " eu-west-1", "a".repeat(100)])
+  for (const value of [undefined, "", "eu-west-1.*", " eu-west-1", "a".repeat(100)]) {
     expect(() => region(value)).toThrow();
+  }
   for (const value of [
     "",
     "localhost",
@@ -41,14 +42,18 @@ it("validates explicit configuration, resource bounds, host scope, and SQL ident
     host + "/",
     "x.dsql.us-east-1.on.aws",
     "user@" + host,
-  ])
+  ]) {
     expect(() => dsqlProvider(value, "service", aws)).toThrow();
-  for (const value of ["", "service,public", 'a"; DROP SCHEMA public', "s".repeat(64)])
+  }
+  for (const value of ["", "service,public", 'a"; DROP SCHEMA public', "s".repeat(64)]) {
     expect(() => dsqlProvider(host, value, aws)).toThrow();
-  for (const value of ["", "ab", "Uppercase", "a..b", "1.2.3.4", "a".repeat(64), "s3://bucket"])
+  }
+  for (const value of ["", "ab", "Uppercase", "a..b", "1.2.3.4", "a".repeat(64), "s3://bucket"]) {
     expect(() => bucketName(value)).toThrow();
-  for (const value of ["", "x/y", "x".repeat(65), " target", "https://lambda"])
+  }
+  for (const value of ["", "x/y", "x".repeat(65), " target", "https://lambda"]) {
     expect(() => workerName(value)).toThrow();
+  }
   expect(workerName("service-worker:live")).toBe("service-worker:live");
   expect(
     workerName("arn:aws:lambda:eu-west-1:000000000000:function:service-worker:live"),
@@ -104,20 +109,20 @@ it("only DSQL SQLSTATE 40001 proves an abort, not OC000, messages, or connection
     expect(isDsqlAbort({ code })).toBe(code === "40001");
     expect(isPostgresAbort({ code })).toBe(code === "40001" || code === "40P01");
   }
-  expect(isDsqlAbort(Error("40001 OC000"))).toBe(false);
+  expect(isDsqlAbort(new Error("40001 OC000"))).toBe(false);
 });
 
 it("real SDK clients use non-default region, finite transport/retries and static credentials, with no HTTP", async () => {
   vi.stubEnv("AWS_REGION", "ap-southeast-2");
   const json = '{"ok":true}';
   const checksum = Buffer.from(computeSha256(json), "hex").toString("base64");
-  const configs: {
+  const configs: Array<{
     region: string;
     attempts: number;
     timeout: number;
     connection: number;
     throws: boolean;
-  }[] = [];
+  }> = [];
   for (const Client of [S3Client, LambdaClient]) {
     vi.spyOn(Client.prototype, "send").mockImplementation(async function (
       this: S3Client | LambdaClient,
@@ -155,7 +160,7 @@ it("real SDK clients use non-default region, finite transport/retries and static
 });
 
 it("real S3 serialization and signing stop at an offline HTTP handler", async () => {
-  const requests: { hostname: string; method: string; headers: Record<string, string> }[] = [];
+  const requests: Array<{ hostname: string; method: string; headers: Record<string, string> }> = [];
   const client = new S3Client({
     ...aws,
     maxAttempts: 1,

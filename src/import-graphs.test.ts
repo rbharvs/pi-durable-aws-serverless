@@ -22,11 +22,12 @@ it("public runtime exports remain deliberate and provider-independent", () => {
   ]);
 });
 
-for (const root of Object.keys(roots) as Root[])
+for (const root of Object.keys(roots) as Root[]) {
   it(`normal ${root} output excludes its forbidden dependencies`, async () => {
     const graph = await bundleGraph(root);
     expect(() => assertGraphBoundaries(root, graph)).not.toThrow();
   });
+}
 
 async function fixture(root: Root, source: string) {
   const directory = await mkdtemp(join(tmpdir(), "durable-graph-"));
@@ -40,7 +41,7 @@ async function fixture(root: Root, source: string) {
 }
 const from = (path: string) => JSON.stringify(resolve(path));
 
-const forbidden: readonly [Root, string, string][] = [
+const forbidden: ReadonlyArray<[Root, string, string]> = [
   ["worker", "project dispatcher", `export { dispatcher } from ${from("src/aws/dispatch.ts")};`],
   ["api", "local runtime", `export { runtimeDependencies } from ${from("src/runtime.ts")};`],
   ["api", "SQL storage", `export { SqlStorage } from ${from("src/sql/storage.ts")};`],
@@ -64,16 +65,17 @@ const forbidden: readonly [Root, string, string][] = [
     `export { LambdaClient } from ${from("node_modules/@aws-sdk/client-lambda")};`,
   ],
 ];
-for (const [root, label, source] of forbidden)
+for (const [root, label, source] of forbidden) {
   it(`${root} rejects a real emitted ${label} import`, async () => {
     const graph = await fixture(root, source);
     expect(() => assertGraphBoundaries(root, graph)).toThrow(`Forbidden ${root} dependencies`);
   });
+}
 
 for (const [root, path, symbol] of [
   ["worker", "src/aws/dispatch.ts", "dispatcher"],
   ["api", "src/runtime.ts", "runtimeDependencies"],
-] as const)
+] as const) {
   it(`${root} allows parsed but eliminated ${symbol} imports`, async () => {
     const graph = await fixture(
       root,
@@ -86,6 +88,7 @@ for (const [root, path, symbol] of [
     expect(Object.keys(graph.metafile.inputs)).toContain(path);
     expect(() => assertGraphBoundaries(root, graph)).not.toThrow();
   });
+}
 
 it("a worker may include an operator Lambda tool and harmless invocation strings", async () => {
   const graph = await fixture(

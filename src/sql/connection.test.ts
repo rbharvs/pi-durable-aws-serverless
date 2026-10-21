@@ -6,20 +6,20 @@ import { connect, isPostgresAbort, postgresProvider, schemaIdentifier } from "./
 afterEach(() => vi.restoreAllMocks());
 
 function offlineClients(fail?: "connect" | "query") {
-  const configs: pg.ClientConfig[] = [],
-    clients: OfflineClient[] = [];
+  const configs: pg.ClientConfig[] = [];
+  const clients: OfflineClient[] = [];
 
   class OfflineClient extends EventEmitter {
     connect = vi.fn(async () => {
-      if (fail === "connect") throw Error("synthetic connect failure");
+      if (fail === "connect") throw new Error("synthetic connect failure");
     });
     query = vi.fn(async (_sql: string) => {
-      if (fail === "query") throw Error("synthetic schema setter failure");
+      if (fail === "query") throw new Error("synthetic schema setter failure");
 
       return { rows: [] };
     });
     end = vi.fn(async () => {
-      if (fail) throw Error("synthetic close failure");
+      if (fail) throw new Error("synthetic close failure");
     });
 
     constructor(config: pg.ClientConfig) {
@@ -37,8 +37,8 @@ function offlineClients(fail?: "connect" | "query") {
 }
 
 it("accepts 63 ASCII schema characters but rejects both 64-character equal-prefix names before connection", async () => {
-  const { constructor } = offlineClients(),
-    prefix = "s".repeat(63);
+  const { constructor } = offlineClients();
+  const prefix = "s".repeat(63);
 
   expect(schemaIdentifier(prefix)).toBe(`"${prefix}"`);
 
@@ -81,7 +81,7 @@ it("the concrete pg boundary keeps finite timeouts, one schema setter and idle-e
   expect(clients[0].end).toHaveBeenCalledTimes(1);
 });
 
-for (const fail of ["connect", "query"] as const)
+for (const fail of ["connect", "query"] as const) {
   it(`a failed ${fail} during acquisition closes the client and propagates its own cause`, async () => {
     const { clients } = offlineClients(fail);
 
@@ -91,21 +91,25 @@ for (const fail of ["connect", "query"] as const)
     expect(clients).toHaveLength(1);
     expect(clients[0].end).toHaveBeenCalledTimes(1);
   });
+}
 
 it("rejects invalid local ports before constructing a client", () => {
   const { constructor } = offlineClients();
 
-  for (const port of [0, 65536, 1.5, Number.NaN])
+  for (const port of [0, 65536, 1.5, Number.NaN]) {
     expect(() => postgresProvider(port, "synthetic-password", "public")).toThrow(
       "Invalid local port",
     );
+  }
   expect(constructor).not.toHaveBeenCalled();
 });
 
 it("retries only provider-confirmed serialization and deadlock aborts", () => {
   const coded = (code: unknown) => Object.assign(new Error("synthetic provider fault"), { code });
 
-  for (const code of ["40001", "40P01"]) expect(isPostgresAbort(coded(code))).toBe(true);
+  for (const code of ["40001", "40P01"]) {
+    expect(isPostgresAbort(coded(code))).toBe(true);
+  }
   // Termination, connection loss and constraint failures have unknown or non-retryable outcomes.
   for (const error of [
     coded("57P01"),
@@ -120,6 +124,7 @@ it("retries only provider-confirmed serialization and deadlock aborts", () => {
     "40001",
     null,
     undefined,
-  ])
+  ]) {
     expect(isPostgresAbort(error)).toBe(false);
+  }
 });

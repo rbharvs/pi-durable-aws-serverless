@@ -15,8 +15,9 @@ const digest = (bytes: Uint8Array) => Buffer.from(computeSha256(bytes), "hex");
 /** S3's SHA-256 of concatenated binary part hashes, not the SHA-256 of the full body. */
 function composite(body: Buffer, partSize = 5 * 1024 * 1024) {
   const hashes: Buffer[] = [];
-  for (let i = 0; i < body.length; i += partSize)
+  for (let i = 0; i < body.length; i += partSize) {
     hashes.push(digest(body.subarray(i, i + partSize)));
+  }
   return `${digest(Buffer.concat(hashes)).toString("base64")}-${hashes.length}`;
 }
 
@@ -29,7 +30,7 @@ function wire(body: Buffer, headers: Record<string, string>, status = 200, trans
       async handle(request: Parameters<S3Client["config"]["requestHandler"]["handle"]>[0]) {
         methods.push(request.method);
         if (transportError) throw transportError;
-        if (request.method === "PUT")
+        if (request.method === "PUT") {
           return {
             response: {
               statusCode: 200,
@@ -37,6 +38,7 @@ function wire(body: Buffer, headers: Record<string, string>, status = 200, trans
               body: Readable.from([]),
             },
           };
+        }
         return {
           response: {
             statusCode: status,
@@ -71,7 +73,7 @@ function wire(body: Buffer, headers: Record<string, string>, status = 200, trans
 
 afterEach(() => vi.restoreAllMocks());
 
-for (const large of [false, true])
+for (const large of [false, true]) {
   it(`real SDK wire accepts valid composite SHA256 staging large=${large}`, async () => {
     const body = large
       ? Buffer.from(
@@ -88,6 +90,7 @@ for (const large of [false, true])
       f.store.close();
     }
   });
+}
 
 it("caller hash, not composite-looking S3 checksum metadata, decides matching staged bytes", async () => {
   for (const type of [undefined, "FULL_OBJECT"]) {
@@ -103,7 +106,7 @@ it("caller hash, not composite-looking S3 checksum metadata, decides matching st
   }
 });
 
-for (const checksum of [composite(small), "malformed-1"])
+for (const checksum of [composite(small), "malformed-1"]) {
   it(`caller full raw hash rejects tampering even when SDK skips composite checksum ${checksum}`, async () => {
     const tampered = Buffer.from(small.toString().replace("hello", "other"));
     const f = wire(tampered, {
@@ -121,6 +124,7 @@ for (const checksum of [composite(small), "malformed-1"])
       f.store.close();
     }
   });
+}
 
 for (const kind of [
   "full",
@@ -129,7 +133,7 @@ for (const kind of [
   "malformed-suffix",
   "missing",
   "transport",
-] as const)
+] as const) {
   it(`real SDK staging wire retains ${kind} behavior`, async () => {
     const body =
       kind === "missing"
@@ -145,23 +149,25 @@ for (const kind of [
       body,
       kind === "none" || kind === "missing" ? {} : { "x-amz-checksum-sha256": checksum },
       kind === "missing" ? 404 : 200,
-      kind === "transport" ? Error("offline transport") : undefined,
+      kind === "transport" ? new Error("offline transport") : undefined,
     );
     try {
       const response = await f.submit(small);
-      if (kind === "full" || kind === "none" || kind === "malformed-suffix")
+      if (kind === "full" || kind === "none" || kind === "malformed-suffix") {
         expect(response).toMatchObject({ ok: true });
-      else
+      } else {
         expect(response).toEqual({
           ok: false,
           code: kind === "missing" ? "staged-content-invalid" : "unavailable",
           retryable: kind !== "missing",
         });
+      }
       expect(f.methods).toEqual(["GET"]);
     } finally {
       f.store.close();
     }
   });
+}
 
 it("staged integrity uses the raw digest before canonical JSON, even with a valid SDK checksum", async () => {
   const raw = Buffer.from(JSON.stringify({ whenBusy: "followUp", content: "hello" }));

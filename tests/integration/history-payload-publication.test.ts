@@ -84,8 +84,9 @@ it("rejects a logical commit over 32 MiB before the gate, SQL, or PUT while a re
 
     expect(writes.length).toBeLessThan(1000);
     expect(Buffer.byteLength(JSON.stringify(writes))).toBeGreaterThan(32 * 1024 * 1024);
-    for (const write of writes)
+    for (const write of writes) {
       expect(Buffer.byteLength(JSON.stringify(write.value))).toBeLessThanOrEqual(16 * 1024 * 1024);
+    }
     hold = true;
     read = f.storage.conversation(rootId, context);
     await entered.promise;
@@ -214,7 +215,7 @@ it("accounts for owner/payload rows, statements, and primitive UTF-8 bind bytes"
 it("retries identical frozen publication statements after a confirmed abort, preparing and uploading once", async () => {
   let publishing = false;
   let abort = true;
-  const original = Object.assign(Error("confirmed publication abort"), { code: "40001" });
+  const original = Object.assign(new Error("confirmed publication abort"), { code: "40001" });
   const f = await historyFixture("payload_retry", {
     hook: async (phase, sql) => {
       if (phase === "after" && sql.startsWith("UPDATE harness SET next_seq")) publishing = true;
@@ -257,7 +258,7 @@ it("retries identical frozen publication statements after a confirmed abort, pre
 });
 
 it("exhausted confirmed publication aborts leave only one object orphan, not DB payload rows", async () => {
-  const failure = Object.assign(Error("confirmed abort"), { code: "40001" });
+  const failure = Object.assign(new Error("confirmed abort"), { code: "40001" });
   const f = await historyFixture("payload_exhausted", {
     hook: async (phase, sql) => {
       if (phase === "before" && sql.startsWith("UPDATE harness SET next_seq")) throw failure;
@@ -283,9 +284,9 @@ it("exhausted confirmed publication aborts leave only one object orphan, not DB 
   }
 });
 
-for (const interruption of ["before-BEGIN", "after-payload-insert"] as const)
+for (const interruption of ["before-BEGIN", "after-payload-insert"] as const) {
   it(`publication interruption ${interruption} permits an object orphan but no DB leak`, async () => {
-    const failure = Error("publication interrupted");
+    const failure = new Error("publication interrupted");
     const f = await historyFixture("payload_interrupted", {
       hook: async (phase, sql) => {
         if (
@@ -293,8 +294,9 @@ for (const interruption of ["before-BEGIN", "after-payload-insert"] as const)
           (interruption === "after-payload-insert" &&
             phase === "after" &&
             sql.startsWith("INSERT INTO s3_payloads"))
-        )
+        ) {
           throw failure;
+        }
       },
       objects: memoryObjects,
     });
@@ -312,6 +314,7 @@ for (const interruption of ["before-BEGIN", "after-payload-insert"] as const)
       await f.finish();
     }
   });
+}
 
 it("detaches nested writes and their array at invocation, even while queued behind a read", async () => {
   const entered = deferred();
@@ -366,7 +369,7 @@ it("detaches nested writes and their array at invocation, even while queued behi
 it("joins bounded in-flight uploads after failure before rejecting, without starting publication", async () => {
   const gates = Array.from({ length: 6 }, () => deferred());
   const started = deferred();
-  const failure = Error("upload failed");
+  const failure = new Error("upload failed");
   let active = 0;
   let peak = 0;
   let calls = 0;
@@ -421,7 +424,9 @@ it("joins bounded in-flight uploads after failure before rejecting, without star
     expect(settled).toBe(false);
     expect(active).toBe(3);
     expect(f.trace.filter((q) => q.sql === BEGIN_WRITE)).toEqual([]);
-    for (const gate of gates) gate.resolve();
+    for (const gate of gates) {
+      gate.resolve();
+    }
     expect(await operation).toBe(failure);
     expect(active).toBe(0);
     expect(peak).toBe(4);
@@ -432,7 +437,9 @@ it("joins bounded in-flight uploads after failure before rejecting, without star
     expect(await f.snapshot()).toEqual(before);
     expect(f.storage.status).toBe("open");
   } finally {
-    for (const gate of gates) gate.resolve();
+    for (const gate of gates) {
+      gate.resolve();
+    }
     await operation;
     await f.finish();
   }

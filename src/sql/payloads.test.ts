@@ -30,7 +30,7 @@ function objectsFor(ns: HarnessId) {
       };
     },
     async get() {
-      throw Error("Planner must not read objects");
+      throw new Error("Planner must not read objects");
     },
   };
 
@@ -113,13 +113,14 @@ it("rejects invalid JSON, foreign namespaces, and oversized objects during plann
     { ns, json: "not-json" },
     { ns: harnessId("foreign"), json: "{}" },
     { ns, json: JSON.stringify("x".repeat(LIMITS.maxObjectBytes)) },
-  ])
+  ]) {
     expect(() => payloads.plan([{ table: "records", id: 20, ...value }], 0)).toThrow();
+  }
   expect(memory.puts).toEqual([]);
 });
 
 it.each([
-  ["Error", Error("upload failed")],
+  ["Error", new Error("upload failed")],
   ["undefined", undefined],
   ["null", null],
   ["false", false],
@@ -178,7 +179,9 @@ it.each([
       expect(starts).toEqual([0, 1, 2, 3]);
       expect(active).toBe(2);
       expect(settled).toBe(false);
-      for (const gate of gates) gate.resolve();
+      for (const gate of gates) {
+        gate.resolve();
+      }
       const outcome = await operation;
 
       expect(outcome).toEqual({ kind: "rejected", reason: failure });
@@ -188,7 +191,9 @@ it.each([
       expect(active).toBe(0);
       expect(peak).toBe(4);
     } finally {
-      for (const gate of gates) gate.resolve();
+      for (const gate of gates) {
+        gate.resolve();
+      }
       await operation;
     }
   },

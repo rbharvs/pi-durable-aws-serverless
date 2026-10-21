@@ -12,7 +12,7 @@ const command = { kind: "inline", input: { content: "hello", whenBusy: "followUp
  */
 function submitApi(connectAuthority: () => Promise<ApiAuthority>) {
   const wakes: string[] = [];
-  const events: Record<string, unknown>[] = [];
+  const events: Array<Record<string, unknown>> = [];
   const reports: unknown[] = [];
   let connects = 0;
   const deps: ApiDependencies = {
@@ -26,11 +26,13 @@ function submitApi(connectAuthority: () => Promise<ApiAuthority>) {
         wakes.push(ns);
       },
     },
-    event: (name, fields) => events.push({ name, ...fields }),
+    event: (name, fields) => {
+      events.push({ name, ...fields });
+    },
     report: (cause) => {
       reports.push(cause);
 
-      throw Error("broken diagnostic sink");
+      throw new Error("broken diagnostic sink");
     },
   };
 
@@ -39,7 +41,7 @@ function submitApi(connectAuthority: () => Promise<ApiAuthority>) {
 
 it("rejects malformed requests as invalid input before acquiring authority", async () => {
   const api = submitApi(async () => {
-    throw Error("must not connect");
+    throw new Error("must not connect");
   });
   const sparse: unknown[] = [];
 
@@ -69,8 +71,9 @@ it("rejects malformed requests as invalid input before acquiring authority", asy
     },
   ];
 
-  for (const input of malformed)
+  for (const input of malformed) {
     expect(await api.run(input)).toEqual({ ok: false, code: "invalid-input", retryable: false });
+  }
 
   expect(api.connects()).toBe(0);
   expect(api.wakes).toEqual([]);
@@ -89,7 +92,7 @@ it("rejects malformed requests as invalid input before acquiring authority", asy
 });
 
 it("an acquisition failure is retryable unavailable and keeps the cause private", async () => {
-  const cause = Error("SELECT private provider secret");
+  const cause = new Error("SELECT private provider secret");
   const api = submitApi(async () => {
     throw cause;
   });

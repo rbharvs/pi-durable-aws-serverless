@@ -6,8 +6,8 @@ export function loseAcknowledgement(
   operation: "mintId" | "commit",
   applied: boolean,
 ): Storage {
-  let fired = false,
-    failed = false;
+  let fired = false;
+  let failed = false;
 
   return new Proxy(storage, {
     get(target, key) {

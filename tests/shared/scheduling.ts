@@ -39,7 +39,7 @@ export function controlledWork(useTools = false) {
   models.setProvider(fauxProvider().provider);
 
   const registry = createRegistry();
-  const starts: { name: string; finish(): void }[] = [];
+  const starts: Array<{ name: string; finish(): void }> = [];
   let changed = deferred();
   const tools = (["safe", "unsafe"] as const).map((name) =>
     defineTool({
@@ -49,7 +49,7 @@ export function controlledWork(useTools = false) {
       parameters: Type.Object({}),
       execute: async (_args, _api, ctx) => {
         const gate = deferred();
-        const abort = () => gate.reject(ctx.abortSignal?.reason ?? Error("aborted"));
+        const abort = () => gate.reject(ctx.abortSignal?.reason ?? new Error("aborted"));
 
         ctx.abortSignal?.addEventListener("abort", abort, { once: true });
         starts.push({ name, finish: () => gate.resolve() });
@@ -100,7 +100,9 @@ export function controlledWork(useTools = false) {
     starts,
 
     async started(count: number) {
-      while (starts.length < count) await changed.promise;
+      while (starts.length < count) {
+        await changed.promise;
+      }
     },
   };
 }

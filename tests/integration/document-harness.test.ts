@@ -72,7 +72,7 @@ it("actual Session fails once on corrupt materialization and never publishes a c
   }
 });
 
-for (const version of [1, 2, Number.MAX_SAFE_INTEGER])
+for (const version of [1, 2, Number.MAX_SAFE_INTEGER]) {
   it(`accepts actual Pi document version ${version}, with the same delta and cold value as public MemoryStorage`, async () => {
     const f = await documentFixture("pi_document_version");
     const token = defineDoc<{ count: number }>({
@@ -121,6 +121,7 @@ for (const version of [1, 2, Number.MAX_SAFE_INTEGER])
       await f.finish();
     }
   });
+}
 
 it("actual Harness forks as-of document state, retires/replaces an address, and keeps cold source history", async () => {
   const f = await documentFixture("pi_document_fork");
@@ -224,7 +225,7 @@ it("actual Pi callback and initialization failures consume IDs but publish no re
     await expect(
       root.commit(async (tx) => {
         callbackId = (await tx.createConversation({ ownership: { kind: "ownerless" } })).id;
-        throw Error("callback cut");
+        throw new Error("callback cut");
       }, context),
     ).rejects.toThrow("callback cut");
     const after = await f.snapshot();
@@ -236,7 +237,7 @@ it("actual Pi callback and initialization failures consume IDs but publish no re
           ownership: { kind: "ownerless" },
           init: (_tx, id) => {
             initId = id;
-            throw Error("init cut");
+            throw new Error("init cut");
           },
         },
         context,
@@ -254,12 +255,12 @@ it("actual Pi callback and initialization failures consume IDs but publish no re
   }
 });
 
-for (const operation of ["mint", "commit"] as const)
-  for (const applied of [false, true])
+for (const operation of ["mint", "commit"] as const) {
+  for (const applied of [false, true]) {
     it(`actual Session seals once after unknown ${operation} applied=${applied}, closes, and retains its lease`, async () => {
-      const failure = Error("outcome unknown");
-      let armed = false,
-        fenced = false;
+      const failure = new Error("outcome unknown");
+      let armed = false;
+      let fenced = false;
       const f = await documentFixture("pi_poison", {
         hook: async (phase, sql) => {
           if (phase === "after" && sql.startsWith("UPDATE harness SET next_seq")) fenced = true;
@@ -314,3 +315,5 @@ for (const operation of ["mint", "commit"] as const)
         await f.finish();
       }
     });
+  }
+}

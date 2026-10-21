@@ -14,13 +14,13 @@ import { check, integer, object, computeSha256 } from "../domain.ts";
 import { recordShape } from "../storage-validation.ts";
 export { assertJson, jsonObject, writeShape } from "../storage-validation.ts";
 
-export type Records = {
+export interface Records {
   conversation: ConversationRecord;
   entry: EntryRecord;
   task: TaskRecord<JsonValue, JsonValue, JsonValue>;
   submission: SubmissionRecord;
   document: DocumentRecord;
-};
+}
 export type RecordType = keyof Records;
 
 export function scope(scope: DocumentRecord["scope"]): [string, number] {
@@ -54,13 +54,13 @@ export function alive(record: DocumentRecord, at: DocumentPoint): boolean {
 export function validateRecord(value: unknown, row: Row, type: RecordType): void {
   recordShape(value, type);
 
-  const v = object(value);
+  const sourceRecord = object(value);
 
-  check(v.id === integer(row.id), "Record ID mismatch");
+  check(sourceRecord.id === integer(row.id), "Record ID mismatch");
 
   switch (type) {
     case "conversation": {
-      const owner = v.owner === undefined ? undefined : object(v.owner);
+      const owner = sourceRecord.owner === undefined ? undefined : object(sourceRecord.owner);
 
       check(
         (owner?.conversationId ?? null) ===
@@ -74,7 +74,7 @@ export function validateRecord(value: unknown, row: Row, type: RecordType): void
 
     case "document": {
       // recordShape established the document shape.
-      const record = v as unknown as DocumentRecord;
+      const record = sourceRecord as unknown as DocumentRecord;
       const [kind, owner] = scope(record.scope);
 
       check(computeSha256(JSON.stringify(record.kind)) === row.kind_hash, "Document kind mismatch");
@@ -92,27 +92,38 @@ export function validateRecord(value: unknown, row: Row, type: RecordType): void
     }
 
     case "entry":
-      check(v.conversationId === integer(row.conversation_id), "Conversation ID mismatch");
-      check(computeSha256(JSON.stringify(v.kind)) === row.kind_hash, "Kind mismatch");
-      check((v.head !== undefined) === row.has_head, "Head mismatch");
+      check(
+        sourceRecord.conversationId === integer(row.conversation_id),
+        "Conversation ID mismatch",
+      );
+      check(computeSha256(JSON.stringify(sourceRecord.kind)) === row.kind_hash, "Kind mismatch");
+      check((sourceRecord.head !== undefined) === row.has_head, "Head mismatch");
       break;
 
     case "task":
-      check(v.conversationId === integer(row.conversation_id), "Conversation ID mismatch");
-      check(computeSha256(JSON.stringify(v.kind)) === row.kind_hash, "Kind mismatch");
-      check(object(v.state).status === row.status, "Task state mismatch");
       check(
-        v.background === row.background && v.abortRequested === row.abort_requested,
+        sourceRecord.conversationId === integer(row.conversation_id),
+        "Conversation ID mismatch",
+      );
+      check(computeSha256(JSON.stringify(sourceRecord.kind)) === row.kind_hash, "Kind mismatch");
+      check(object(sourceRecord.state).status === row.status, "Task state mismatch");
+      check(
+        sourceRecord.background === row.background &&
+          sourceRecord.abortRequested === row.abort_requested,
         "Task flags mismatch",
       );
       break;
 
     case "submission":
-      check(v.conversationId === integer(row.conversation_id), "Conversation ID mismatch");
-      check(v.status === row.status, "Submission state mismatch");
       check(
-        (v.requestId === undefined ? null : computeSha256(JSON.stringify(v.requestId))) ===
-          row.request_hash,
+        sourceRecord.conversationId === integer(row.conversation_id),
+        "Conversation ID mismatch",
+      );
+      check(sourceRecord.status === row.status, "Submission state mismatch");
+      check(
+        (sourceRecord.requestId === undefined
+          ? null
+          : computeSha256(JSON.stringify(sourceRecord.requestId))) === row.request_hash,
         "Request mismatch",
       );
       break;

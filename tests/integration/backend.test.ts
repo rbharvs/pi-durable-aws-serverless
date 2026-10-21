@@ -11,13 +11,13 @@ import {
 } from "./history-support.ts";
 import { provider, wrap } from "./postgres.ts";
 
-for (const failureAt of ["objects", "connect", "open", "none"] as const)
+for (const failureAt of ["objects", "connect", "open", "none"] as const) {
   it(`owns exactly the resources acquired when ${failureAt} fails`, async () => {
     const f = await historyFixture("backend_acquire", { objects: memoryObjects });
-    let connects = 0,
-      ends = 0,
-      closes = 0;
-    const failure = Error(failureAt);
+    let connects = 0;
+    let ends = 0;
+    let closes = 0;
+    const failure = new Error(failureAt);
     const backend = createSqlBackend(
       {
         ...provider,
@@ -31,8 +31,9 @@ for (const failureAt of ["objects", "connect", "open", "none"] as const)
             await end();
           };
           return wrap(client, async (phase, sql) => {
-            if (failureAt === "open" && phase === "before" && sql.startsWith("SELECT epoch"))
+            if (failureAt === "open" && phase === "before" && sql.startsWith("SELECT epoch")) {
               throw failure;
+            }
           });
         },
       },
@@ -61,15 +62,16 @@ for (const failureAt of ["objects", "connect", "open", "none"] as const)
       await f.finish();
     }
   });
+}
 
-for (const duringOpen of [false, true])
+for (const duringOpen of [false, true]) {
   it(`preserves database and asynchronous object cleanup failures during ${duringOpen ? "open" : "close"}`, async () => {
     const f = await historyFixture("backend_errors", { objects: memoryObjects });
-    const opening = Error("open failed"),
-      ending = Error("end failed"),
-      object = Error("object close failed");
-    let ends = 0,
-      closes = 0;
+    const opening = new Error("open failed");
+    const ending = new Error("end failed");
+    const object = new Error("object close failed");
+    let ends = 0;
+    let closes = 0;
     const backend = createSqlBackend(
       {
         ...provider,
@@ -108,13 +110,14 @@ for (const duringOpen of [false, true])
       await f.finish();
     }
   });
+}
 
 it("joins in-flight uploads and SQL before closing objects once, and waits for async object cleanup", async () => {
   const f = await historyFixture("backend_join", { objects: memoryObjects });
-  const uploadStarted = deferred(),
-    uploadRelease = deferred(),
-    cleanupStarted = deferred(),
-    cleanupRelease = deferred();
+  const uploadStarted = deferred();
+  const uploadRelease = deferred();
+  const cleanupStarted = deferred();
+  const cleanupRelease = deferred();
   const sequence: string[] = [];
   const backend = createSqlBackend(
     {

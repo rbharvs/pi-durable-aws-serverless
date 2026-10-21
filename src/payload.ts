@@ -13,10 +13,11 @@ import { LIMITS } from "./limits.ts";
 export class EnvelopeRejected extends Error {}
 
 export function assertEnvelope(rows: number, bytes: number): void {
-  if (rows > LIMITS.maxRows || bytes > LIMITS.maxTransactionBytes)
+  if (rows > LIMITS.maxRows || bytes > LIMITS.maxTransactionBytes) {
     throw new EnvelopeRejected(
       `Atomic envelope exceeded: rows=${rows}/${LIMITS.maxRows}, estimatedBytes=${bytes}/${LIMITS.maxTransactionBytes}`,
     );
+  }
 }
 
 /** History JSON has its own physical bound; it is not the command input format. */
@@ -30,15 +31,21 @@ export function jsonText(value: unknown): string {
   return json;
 }
 
+/** Immutable publication key scoped to one namespace and a fresh UUID-v4. */
 export type ObjectKey = string & { readonly __objectKey: unique symbol };
 
-export type PublishedPayload = {
+/**
+ * Metadata for published canonical input, not proof that the object exists or is durable.
+ * The publisher must confirm durable bytes and keep them immutable for the receipt lifetime.
+ */
+export interface PublishedPayload {
   readonly kind: "s3";
   readonly key: ObjectKey;
   readonly sha256: Sha256;
   readonly bytes: number;
-};
+}
 
+/** Receipt content: canonical inline JSON or metadata for an immutable published object. */
 export type StoredPayload = { readonly kind: "inline"; readonly json: string } | PublishedPayload;
 
 /**

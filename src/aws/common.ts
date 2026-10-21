@@ -5,11 +5,12 @@ import { SqlAuthority } from "../sql/authority.ts";
 import { Database } from "../sql/db.ts";
 import type { Authority } from "../authority.ts";
 
-export type LambdaContext = {
+export interface LambdaContext {
   awsRequestId: string;
   getRemainingTimeInMillis(): number;
-};
+}
 
+/** Validates environment configuration now; each connectAuthority call acquires its own SQL handle. */
 export function configuration(aws: AwsOptions = { region: region(process.env.AWS_REGION) }) {
   const provider = dsqlProvider(
     required(process.env.DSQL_HOST, "DSQL host"),
@@ -24,8 +25,9 @@ export function configuration(aws: AwsOptions = { region: region(process.env.AWS
   };
 }
 
+/** Builds a synchronous JSON sink with invocation identity; writing or serialization may throw. */
 export function logger(source: "api" | "worker" | "reconciler", ctx: LambdaContext) {
-  return (event: string, fields: Record<string, unknown>) =>
+  return (event: string, fields: Record<string, unknown>) => {
     console.log(
       JSON.stringify({
         ...fields,
@@ -35,4 +37,5 @@ export function logger(source: "api" | "worker" | "reconciler", ctx: LambdaConte
         invocation: ctx.awsRequestId,
       }),
     );
+  };
 }

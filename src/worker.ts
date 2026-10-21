@@ -8,6 +8,7 @@ import type { WorkerAuthority, Received } from "./authority.ts";
 import type { AgentInput } from "./input.ts";
 import type { Events } from "./dispatch.ts";
 
+/** Invocation-scoped acquisition and diagnostics; the worker closes acquired handles before release. */
 export interface WorkerDependencies {
   /** Returns a handle owned and closed by this invocation. */
   connectAuthority(): Promise<WorkerAuthority>;
@@ -101,7 +102,9 @@ export async function worker(
   remaining: () => number,
   deps: WorkerDependencies,
 ): Promise<WorkerResult> {
-  const event: Events = (name, fields) => deps.event(name, fields);
+  const event: Events = (name, fields) => {
+    deps.event(name, fields);
+  };
   const control = await deps.connectAuthority();
 
   try {

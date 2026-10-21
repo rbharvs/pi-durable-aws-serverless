@@ -5,34 +5,36 @@ import { requestId } from "../../src/domain.ts";
 import { BEGIN_WRITE } from "../../src/sql/db.ts";
 import { deferred, workerFixture } from "./worker-support.ts";
 
-for (const cut of ["claim", "hasWork", "open", "resolve"] as const)
+for (const cut of ["claim", "hasWork", "open", "resolve"] as const) {
   it(`worker failure at ${cut} closes acquired handles and never releases`, async () => {
     const f = await workerFixture(`worker_${cut}`);
-    const cause = Error(`cut-${cut}`);
-    let closes = 0,
-      releases = 0;
+    const cause = new Error(`cut-${cut}`);
+    let closes = 0;
+    let releases = 0;
     const connect = f.deps.connectAuthority;
     f.deps.connectAuthority = async () => {
-      const c = await connect(),
-        close = c.close.bind(c);
+      const c = await connect();
+      const close = c.close.bind(c);
       c.close = async () => {
         closes++;
         await close();
       };
       c.release = async () => {
         releases++;
-        throw Error("unexpected release");
+        throw new Error("unexpected release");
       };
-      if (cut === "claim" || cut === "hasWork")
+      if (cut === "claim" || cut === "hasWork") {
         c[cut] = async () => {
           throw cause;
         };
+      }
       return c;
     };
-    if (cut === "open" || cut === "resolve")
+    if (cut === "open" || cut === "resolve") {
       f.deps[cut] = async () => {
         throw cause;
       };
+    }
     try {
       await f.receive();
       await expect(f.run()).rejects.toBe(cause);
@@ -45,10 +47,11 @@ for (const cut of ["claim", "hasWork", "open", "resolve"] as const)
       await f.finish();
     }
   });
+}
 
 it("authority acquisition failure does not open Storage or payload objects", async () => {
   const f = await workerFixture("worker_connect");
-  const cause = Error("connect failed");
+  const cause = new Error("connect failed");
   try {
     await f.receive();
     const before = await f.head();
@@ -74,16 +77,16 @@ it("post-resolve deadline leaves the receipt unmapped and joins close before rel
     return input;
   };
   const order: string[] = [];
-  const open = f.deps.open,
-    connect = f.deps.connectAuthority;
+  const open = f.deps.open;
+  const connect = f.deps.connectAuthority;
   f.deps.open = async (lease) => {
     const opened = await open(lease);
     void opened.harness.closed.then(() => order.push("closed"));
     return opened;
   };
   f.deps.connectAuthority = async () => {
-    const c = await connect(),
-      release = c.release.bind(c);
+    const c = await connect();
+    const release = c.release.bind(c);
     c.release = async (lease) => {
       order.push("release");
       return release(lease);
@@ -103,13 +106,13 @@ it("post-resolve deadline leaves the receipt unmapped and joins close before rel
   }
 });
 
-for (const cut of ["registry", "root", "close"] as const)
+for (const cut of ["registry", "root", "close"] as const) {
   it(`actual runtime ${cut} failure closes Storage and retains the lease`, async () => {
     const f = await workerFixture(`runtime_${cut}`);
-    const cause = Error(`${cut} failure`);
-    let acquired: Storage | undefined,
-      closes = 0,
-      callbacks = 0;
+    const cause = new Error(`${cut} failure`);
+    let acquired: Storage | undefined;
+    let closes = 0;
+    let callbacks = 0;
     const open = f.backend.openStorage;
     f.backend.openStorage = async (lease) => {
       acquired = await open(lease);
@@ -131,10 +134,11 @@ for (const cut of ["registry", "root", "close"] as const)
         },
       },
     };
-    if (cut === "registry")
+    if (cut === "registry") {
       options.harnessOptions.registry.snapshot = () => {
         throw cause;
       };
+    }
     const deps = runtimeDependencies(options);
     try {
       await f.receive();
@@ -150,10 +154,11 @@ for (const cut of ["registry", "root", "close"] as const)
       await f.finish();
     }
   });
+}
 
 it("asynchronous Session failure surfaces its cause, joins closure, and retains the lease", async () => {
   let armed = false;
-  const cause = Error("background durability failure");
+  const cause = new Error("background durability failure");
   const f = await workerFixture("worker_session", true, async (phase, sql) => {
     if (armed && phase === "before" && sql === BEGIN_WRITE) {
       armed = false;
@@ -161,8 +166,8 @@ it("asynchronous Session failure surfaces its cause, joins closure, and retains 
     }
   });
   const mapped = deferred();
-  const connect = f.deps.connectAuthority,
-    open = f.deps.open;
+  const connect = f.deps.connectAuthority;
+  const open = f.deps.open;
   let harness: Harness | undefined;
   f.deps.open = async (lease) => {
     const opened = await open(lease);
@@ -170,8 +175,8 @@ it("asynchronous Session failure surfaces its cause, joins closure, and retains 
     return opened;
   };
   f.deps.connectAuthority = async () => {
-    const c = await connect(),
-      mark = c.markAdmitted.bind(c);
+    const c = await connect();
+    const mark = c.markAdmitted.bind(c);
     c.markAdmitted = async (item, id) => {
       await mark(item, id);
       mapped.resolve();
@@ -209,8 +214,8 @@ it("runtime factory retains Backend and resource method receivers", async () => 
       return this.backend.openStorage(lease);
     }
   }
-  let readersClosed = 0,
-    reads = 0;
+  let readersClosed = 0;
+  let reads = 0;
   const options = {
     ...f.options,
     backend: new BoundBackend(f.backend),
@@ -249,13 +254,13 @@ it("runtime factory retains Backend and resource method receivers", async () => 
   }
 });
 
-for (const applied of [false, true])
+for (const applied of [false, true]) {
   it(`unknown release applied=${applied} is attempted once, only after clean close`, async () => {
     const f = await workerFixture("worker_release");
-    let attempts = 0,
-      closed = false;
-    const connect = f.deps.connectAuthority,
-      open = f.deps.open;
+    let attempts = 0;
+    let closed = false;
+    const connect = f.deps.connectAuthority;
+    const open = f.deps.open;
     f.deps.open = async (lease) => {
       const result = await open(lease);
       void result.harness.closed.then(() => {
@@ -264,13 +269,13 @@ for (const applied of [false, true])
       return result;
     };
     f.deps.connectAuthority = async () => {
-      const c = await connect(),
-        release = c.release.bind(c);
+      const c = await connect();
+      const release = c.release.bind(c);
       c.release = async (lease) => {
         expect(closed).toBe(true);
         attempts++;
         if (applied) await release(lease);
-        throw Error("release unknown");
+        throw new Error("release unknown");
       };
       return c;
     };
@@ -285,14 +290,15 @@ for (const applied of [false, true])
       await f.finish();
     }
   });
+}
 
 it("arrival during close remains durable for the next invocation; worker never dispatches", async () => {
   const f = await workerFixture("worker_late");
   const open = f.backend.openStorage;
   let late = false;
   f.backend.openStorage = async (lease) => {
-    const s = await open(lease),
-      close = s.close.bind(s);
+    const s = await open(lease);
+    const close = s.close.bind(s);
     s.close = async (c) => {
       if (!late) {
         late = true;
@@ -317,13 +323,13 @@ it("arrival during close remains durable for the next invocation; worker never d
 
 it("worker waits for actual Storage close before releasing or returning", async () => {
   const f = await workerFixture("worker_join");
-  const closing = deferred(),
-    join = deferred();
+  const closing = deferred();
+  const join = deferred();
   const open = f.backend.openStorage;
   let returned = false;
   f.backend.openStorage = async (lease) => {
-    const s = await open(lease),
-      close = s.close.bind(s);
+    const s = await open(lease);
+    const close = s.close.bind(s);
     s.close = async (c) => {
       closing.resolve();
       await join.promise;

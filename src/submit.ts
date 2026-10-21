@@ -36,11 +36,13 @@ export async function resolveInput(
   check(bytes <= MAX_INPUT_BYTES, "Inbox input exceeds bounded size");
   const input = canonicalStagedInput(Buffer.from(json));
   check(input.json === json && input.sha256 === item.hash, "Inbox payload integrity");
-  if (payload.kind === "s3")
+  if (payload.kind === "s3") {
     check(bytes === payload.bytes && input.sha256 === payload.sha256, "Inbox object integrity");
+  }
   return input.input;
 }
 
+/** Receipt acknowledgment or classified failure, not confirmation that the agent processed input. */
 export type SubmitResponse =
   | {
       readonly ok: true;
@@ -58,7 +60,9 @@ export type SubmitResponse =
       readonly retryable: true;
     };
 
-export type ApiDependencies = {
+/** Submission-owned handles are closed before the advisory wake; sinks remain caller-owned. */
+export interface ApiDependencies {
+  /** Each call returns a fresh handle closed by the submission, including on failure. */
   connectAuthority(): Promise<ApiAuthority>;
   /** Omit for inline-only admission. A handle is acquired only for staged commands. */
   objects?(ns: HarnessId): CommandObjects;
@@ -66,7 +70,7 @@ export type ApiDependencies = {
   readonly event: Events;
   /** Optional private diagnostic sink. Full causes never enter the wire or routine events. */
   report?(cause: unknown): void;
-};
+}
 
 function parse(input: unknown): { ns: HarnessId; request: RequestId; command: PreparedCommand } {
   try {

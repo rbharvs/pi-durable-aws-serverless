@@ -60,7 +60,7 @@ function configuration() {
     aws,
     provider: {
       connect: async () => {
-        throw Error("unexpected SQL");
+        throw new Error("unexpected SQL");
       },
       isRetryableAbort: () => false,
     },
@@ -77,7 +77,7 @@ it("actual invalid API, failed receipt, and empty reconciler roots construct no 
   f.spy.mockReturnValue({
     ...f.config,
     connectAuthority: async () => {
-      throw Error("offline acquisition");
+      throw new Error("offline acquisition");
     },
   });
   expect(

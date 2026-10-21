@@ -18,7 +18,7 @@ it("a planned payload owns its immutable JSON and namespace before upload starts
       };
     },
     async get() {
-      throw Error("No reads expected during planning");
+      throw new Error("No reads expected during planning");
     },
   });
   const value = { ns, table: "records" as const, id: 20, json: original };

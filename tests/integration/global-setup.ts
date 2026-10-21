@@ -13,7 +13,7 @@ const projectLabel = "pi-durable-aws-serverless-tests";
 function docker(args: string[], timeout = 30000): Promise<string> {
   return new Promise((resolve, reject) =>
     execFile("docker", args, { timeout, maxBuffer: 1024 * 1024 }, (error, stdout) => {
-      if (error) reject(Error("Owned PostgreSQL Docker command failed"));
+      if (error) reject(new Error("Owned PostgreSQL Docker command failed"));
       else resolve(stdout.trim());
     }),
   );
@@ -33,10 +33,10 @@ function recoveredId(name: string): string | undefined {
 }
 
 export default async function setup(project: TestProject) {
-  const name = `durable-test-${randomUUID()}`,
-    password = randomBytes(32).toString("base64url");
-  let id: string | undefined,
-    cleaned = false;
+  const name = `durable-test-${randomUUID()}`;
+  const password = randomBytes(32).toString("base64url");
+  let id: string | undefined;
+  let cleaned = false;
   const cleanup = () => {
     if (!id || cleaned) return;
 
@@ -53,8 +53,9 @@ export default async function setup(project: TestProject) {
       removed.status !== 0 ||
       absent.status !== 1 ||
       !/no such (object|container)/i.test(absent.stderr ?? "")
-    )
-      throw Error(`Owned PostgreSQL cleanup failed for ${id}`);
+    ) {
+      throw new Error(`Owned PostgreSQL cleanup failed for ${id}`);
+    }
     cleaned = true;
     console.log(`Owned PostgreSQL removed and verified absent: ${id}`);
   };
@@ -65,9 +66,9 @@ export default async function setup(project: TestProject) {
       process.exit(code);
     }
   };
-  const onInt = () => interrupt(130),
-    onTerm = () => interrupt(143),
-    onExit = () => cleanup();
+  const onInt = () => interrupt(130);
+  const onTerm = () => interrupt(143);
+  const onExit = () => cleanup();
   const detach = () => {
     process.off("SIGINT", onInt);
     process.off("SIGTERM", onTerm);
@@ -116,12 +117,12 @@ export default async function setup(project: TestProject) {
         },
       ).trim();
 
-      if (!/^[a-f0-9]{64}$/.test(created)) throw Error("Invalid owned PostgreSQL ID");
+      if (!/^[a-f0-9]{64}$/.test(created)) throw new Error("Invalid owned PostgreSQL ID");
       id = created;
     } catch {
       id = recoveredId(name);
 
-      throw Error("Owned PostgreSQL creation failed");
+      throw new Error("Owned PostgreSQL creation failed");
     }
 
     console.log(`Owned PostgreSQL created: ${id}`);
@@ -130,7 +131,7 @@ export default async function setup(project: TestProject) {
     const deadline = Date.now() + 60000;
 
     for (;;) {
-      if (Date.now() >= deadline) throw Error("Owned PostgreSQL readiness deadline");
+      if (Date.now() >= deadline) throw new Error("Owned PostgreSQL readiness deadline");
 
       try {
         await docker(
@@ -145,10 +146,10 @@ export default async function setup(project: TestProject) {
 
     const binding = await docker(["port", id, "5432/tcp"]);
 
-    if (!/^127\.0\.0\.1:\d+$/.test(binding)) throw Error("Invalid local PostgreSQL binding");
+    if (!/^127\.0\.0\.1:\d+$/.test(binding)) throw new Error("Invalid local PostgreSQL binding");
 
-    const port = Number(binding.split(":")[1]),
-      base = postgresProvider(port, password, "public");
+    const port = Number(binding.split(":")[1]);
+    const base = postgresProvider(port, password, "public");
 
     const client = await base.connect();
 
@@ -184,6 +185,6 @@ export default async function setup(project: TestProject) {
       detach();
     }
 
-    throw Error("Owned local PostgreSQL setup failed; secret configuration withheld");
+    throw new Error("Owned local PostgreSQL setup failed; secret configuration withheld");
   }
 }

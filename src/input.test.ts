@@ -112,8 +112,9 @@ describe("canonical Pi input boundary", () => {
       },
       "Too many images",
     ],
-  ] as const)
+  ] as const) {
     it(`rejects ${name}`, () => expect(() => canonical(value)).toThrow(message));
+  }
   it("validates and stores only the first value read from each input property", () => {
     const later = [{ type: "text", text: "later" }];
 
@@ -194,7 +195,9 @@ it("canonicalizes indexed blocks without invoking a caller iterator", () => {
   Object.defineProperty(content, Symbol.iterator, {
     value: function* () {
       iteratorCalls++;
-      for (let i = 0; i <= MAX_BLOCKS; i++) yield { type: "text", text: "iterator" };
+      for (let i = 0; i <= MAX_BLOCKS; i++) {
+        yield { type: "text", text: "iterator" };
+      }
     },
   });
   expect(canonical({ content, whenBusy: "followUp" })).toEqual(

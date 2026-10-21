@@ -22,8 +22,8 @@ import { BACKGROUND_CONTEXT as context } from "@earendil-works/chord/context";
 
 it("pinned public Pi prepare/apply, commit and detached reads do not yield before publication/snapshot", async () => {
   expect(MemoryStorage).toBe(SubpathMemory);
-  const engine = new SubpathMemory(),
-    root = idFromNumber<ConversationId>(1);
+  const engine = new SubpathMemory();
+  const root = idFromNumber<ConversationId>(1);
   try {
     const prepared = engine.prepareCommit([{ type: "conversation", value: { id: root } }]);
     const before = engine.scanConversations({}, 100, undefined, context);
@@ -58,46 +58,46 @@ it("pinned public Pi prepare/apply, commit and detached reads do not yield befor
 });
 
 it("strict injected expiry permits takeover, never revokes the current owner's writes", async () => {
-  const f = await memoryFixture(true),
-    other = createMemoryBackend({ now: f.time });
+  const fixture = await memoryFixture(true);
+  const other = createMemoryBackend({ now: fixture.time });
   const foreign = await other.connectAuthority();
-  const s = await f.backend.openStorage(f.lease);
+  const storage = await fixture.backend.openStorage(fixture.lease);
   try {
-    await f.authority.receive(f.ns, requestId("pending"), input);
-    f.advance(f.lease.until - f.time());
-    expect(await f.authority.claim(f.ns, 45000)).toEqual({ kind: "held" });
-    expect(await f.authority.eligible()).toEqual([]);
-    f.advance(1);
-    expect(await f.authority.eligible()).toEqual([f.ns]);
-    expect(await s.mintId()).toBe(f.firstId);
-    await s.commit([], context);
-    await foreign.receive(f.ns, requestId("one"), input);
-    const claim = await foreign.claim(f.ns, 45000);
+    await fixture.authority.receive(fixture.ns, requestId("pending"), input);
+    fixture.advance(fixture.lease.until - fixture.time());
+    expect(await fixture.authority.claim(fixture.ns, 45000)).toEqual({ kind: "held" });
+    expect(await fixture.authority.eligible()).toEqual([]);
+    fixture.advance(1);
+    expect(await fixture.authority.eligible()).toEqual([fixture.ns]);
+    expect(await storage.mintId()).toBe(fixture.firstId);
+    await storage.commit([], context);
+    await foreign.receive(fixture.ns, requestId("one"), input);
+    const claim = await foreign.claim(fixture.ns, 45000);
     check(claim.kind === "claimed", "foreign claim");
-    await expect(f.backend.openStorage(claim.lease)).rejects.toThrow("Stale");
-    await expect(other.openStorage(f.lease)).rejects.toThrow("Stale");
-    expect(await f.authority.release(f.lease)).toBe("released");
-    expect(await f.authority.claim(f.ns, 45000)).toEqual({ kind: "held" });
-    f.advance(1);
-    const next = await f.authority.claim(f.ns, 45000);
+    await expect(fixture.backend.openStorage(claim.lease)).rejects.toThrow("Stale");
+    await expect(other.openStorage(fixture.lease)).rejects.toThrow("Stale");
+    expect(await fixture.authority.release(fixture.lease)).toBe("released");
+    expect(await fixture.authority.claim(fixture.ns, 45000)).toEqual({ kind: "held" });
+    fixture.advance(1);
+    const next = await fixture.authority.claim(fixture.ns, 45000);
     check(next.kind === "claimed", "next claim");
-    expect(next.lease.epoch).toBe(f.lease.epoch + 1);
-    await expect(s.commit([], context)).rejects.toThrow("Stale");
-    await expect(s.mintId()).rejects.toThrow("failed");
-    expect(await f.authority.release(f.lease)).toBe("lost");
+    expect(next.lease.epoch).toBe(fixture.lease.epoch + 1);
+    await expect(storage.commit([], context)).rejects.toThrow("Stale");
+    await expect(storage.mintId()).rejects.toThrow("failed");
+    expect(await fixture.authority.release(fixture.lease)).toBe("lost");
   } finally {
-    await s.close(context);
+    await storage.close(context);
     await foreign.close();
-    await f.finish();
+    await fixture.finish();
   }
 });
 
 it("no asynchronous gap between fence and Pi apply: the next turn observes work before takeover", async () => {
-  const f = await memoryFixture(true),
-    s = await f.backend.openStorage(f.lease);
+  const fixture = await memoryFixture(true);
+  const storage = await fixture.backend.openStorage(fixture.lease);
   try {
-    await f.expire();
-    const pending = s.commit(
+    await fixture.expire();
+    const pending = storage.commit(
       [
         {
           type: "submission",
@@ -112,26 +112,26 @@ it("no asynchronous gap between fence and Pi apply: the next turn observes work 
       context,
     );
     const nextTurn = Promise.resolve().then(() => {
-      const work = f.authority.hasWork(f.ns);
-      const claim = f.authority.claim(f.ns, 45000);
+      const work = fixture.authority.hasWork(fixture.ns);
+      const claim = fixture.authority.claim(fixture.ns, 45000);
       return Promise.all([work, claim]);
     });
     await pending;
     const [work, claim] = await nextTurn;
     expect(work).toBe(true);
     check(claim.kind === "claimed", "takeover");
-    const current = await f.backend.openStorage(claim.lease);
+    const current = await fixture.backend.openStorage(claim.lease);
     try {
       expect(await current.submission(idFromNumber(30), context)).toMatchObject({
         status: "queued",
       });
-      await expect(s.commit([], context)).rejects.toThrow("Stale");
+      await expect(storage.commit([], context)).rejects.toThrow("Stale");
     } finally {
       await current.close(context);
     }
   } finally {
-    await s.close(context);
-    await f.finish();
+    await storage.close(context);
+    await fixture.finish();
   }
 });
 
@@ -142,33 +142,33 @@ it("clock options retain their method receiver and backing state cannot escape t
       return this.time;
     }
   }
-  const clock = new Clock(),
-    backend = createMemoryBackend(clock),
-    a = await backend.connectAuthority();
+  const clock = new Clock();
+  const backend = createMemoryBackend(clock);
+  const authority = await backend.connectAuthority();
   const ns = harnessId("clock");
   try {
-    expect((await a.receive(ns, requestId("one"), input)).item.receivedAt).toBe(clock.time);
-    const claim = await a.claim(ns, 45000);
+    expect((await authority.receive(ns, requestId("one"), input)).item.receivedAt).toBe(clock.time);
+    const claim = await authority.claim(ns, 45000);
     check(claim.kind === "claimed", "claim");
     expect(Object.isFrozen(claim.lease)).toBe(true);
-    const s = await backend.openStorage(claim.lease);
+    const storage = await backend.openStorage(claim.lease);
     try {
-      expect(Reflect.ownKeys(s)).toEqual([]);
-      expect(() => Reflect.get(s, "prepareCommit")).toThrow("Unknown");
-      expect(() => Reflect.get(s, "state")).toThrow("Unknown");
+      expect(Reflect.ownKeys(storage)).toEqual([]);
+      expect(() => Reflect.get(storage, "prepareCommit")).toThrow("Unknown");
+      expect(() => Reflect.get(storage, "state")).toThrow("Unknown");
     } finally {
-      await s.close(context);
+      await storage.close(context);
     }
   } finally {
-    await a.close();
+    await authority.close();
   }
 });
 
 it("close drains a held public Pi read but rejects queued read/commit/mint without late effects", async () => {
-  const f = await memoryFixture(true),
-    s = await f.backend.openStorage(f.lease);
-  const reached = Promise.withResolvers<void>(),
-    proceed = Promise.withResolvers<void>();
+  const fixture = await memoryFixture(true);
+  const storage = await fixture.backend.openStorage(fixture.lease);
+  const reached = Promise.withResolvers<void>();
+  const proceed = Promise.withResolvers<void>();
   const scan = SubpathMemory.prototype.scanConversations;
   // Gate the public method's returned snapshot, not the adapter's gate or private backing fields.
   const spy = vi.spyOn(SubpathMemory.prototype, "scanConversations").mockImplementation(function (
@@ -182,19 +182,19 @@ it("close drains a held public Pi read but rejects queued read/commit/mint witho
   let active: ReturnType<Storage["scanConversations"]> | undefined;
   let closing: Promise<void> | undefined;
   try {
-    const seq = await s.commit([], context);
-    active = s.scanConversations({}, 10, undefined, context);
+    const seq = await storage.commit([], context);
+    active = storage.scanConversations({}, 10, undefined, context);
     await reached.promise;
     const queued = Promise.allSettled([
-      s.conversation(idFromNumber<ConversationId>(1), context),
-      s.commit(
+      storage.conversation(idFromNumber<ConversationId>(1), context),
+      storage.commit(
         [{ type: "conversation", value: { id: idFromNumber<ConversationId>(50) } }],
         context,
       ),
-      s.mintId(),
+      storage.mintId(),
     ]);
     let closed = false;
-    closing = s.close(context).then(() => {
+    closing = storage.close(context).then(() => {
       closed = true;
     });
     await Promise.resolve();
@@ -208,10 +208,10 @@ it("close drains a held public Pi read but rejects queued read/commit/mint witho
       expect(result.reason).toMatchObject({ message: expect.stringContaining("closed") });
     }
     await closing;
-    const cold = await f.backend.openStorage(f.lease);
+    const cold = await fixture.backend.openStorage(fixture.lease);
     try {
       expect(await cold.conversation(idFromNumber<ConversationId>(50), context)).toBeUndefined();
-      expect(await cold.mintId()).toBe(f.firstId);
+      expect(await cold.mintId()).toBe(fixture.firstId);
       expect(await cold.commit([], context)).toBe(seq + 1);
     } finally {
       await cold.close(context);
@@ -221,28 +221,28 @@ it("close drains a held public Pi read but rejects queued read/commit/mint witho
     await active?.catch(() => {});
     await closing;
     spy.mockRestore();
-    await s.close(context);
-    await f.finish();
+    await storage.close(context);
+    await fixture.finish();
   }
 });
 
 it("invalid clock values reject receive/claim/eligible without changing namespace or lease", async () => {
   for (const bad of [NaN, -1, 1.5, Number.MAX_SAFE_INTEGER + 1, "5"]) {
     let time = 1000;
-    const backend = createMemoryBackend({ now: () => time }),
-      a = await backend.connectAuthority();
-    const ns = harnessId("valid-clock"),
-      fresh = harnessId("invalid-clock");
+    const backend = createMemoryBackend({ now: () => time });
+    const authority = await backend.connectAuthority();
+    const ns = harnessId("valid-clock");
+    const fresh = harnessId("invalid-clock");
     try {
-      const receipt = (await a.receive(ns, requestId("seed"), input)).item;
-      const claim = await a.claim(ns, 45000);
+      const receipt = (await authority.receive(ns, requestId("seed"), input)).item;
+      const claim = await authority.claim(ns, 45000);
       check(claim.kind === "claimed", "valid claim");
       time = bad as number;
       const results = await Promise.allSettled([
-        a.receive(fresh, requestId("fresh"), input),
-        a.receive(ns, requestId("invalid"), input),
-        a.claim(ns, 45000),
-        a.eligible(),
+        authority.receive(fresh, requestId("fresh"), input),
+        authority.receive(ns, requestId("invalid"), input),
+        authority.claim(ns, 45000),
+        authority.eligible(),
       ]);
       time = claim.lease.until + 1;
       expect(
@@ -253,36 +253,36 @@ it("invalid clock values reject receive/claim/eligible without changing namespac
         check(result.status === "rejected", "clock rejected");
         expect(result.reason).toMatchObject({ message: "Invalid authority clock" });
       }
-      expect(await a.get(fresh, requestId("fresh"))).toBeUndefined();
-      await expect(a.hasWork(fresh)).rejects.toThrow("Unknown namespace");
-      await expect(a.claim(fresh, 45000)).rejects.toThrow("Unknown namespace");
-      expect(await a.get(ns, requestId("invalid"))).toBeUndefined();
-      expect(await a.get(ns, requestId("seed"))).toEqual(receipt);
-      expect(await a.eligible()).toEqual([ns]);
+      expect(await authority.get(fresh, requestId("fresh"))).toBeUndefined();
+      await expect(authority.hasWork(fresh)).rejects.toThrow("Unknown namespace");
+      await expect(authority.claim(fresh, 45000)).rejects.toThrow("Unknown namespace");
+      expect(await authority.get(ns, requestId("invalid"))).toBeUndefined();
+      expect(await authority.get(ns, requestId("seed"))).toEqual(receipt);
+      expect(await authority.eligible()).toEqual([ns]);
       const storage = await backend.openStorage(claim.lease);
       try {
         expect(await storage.mintId()).toBe(2);
       } finally {
         await storage.close(context);
       }
-      const next = await a.claim(ns, 45000);
+      const next = await authority.claim(ns, 45000);
       check(next.kind === "claimed", "valid takeover");
       expect(next.lease.epoch).toBe(claim.lease.epoch + 1);
       expect(next.lease.owner).not.toBe(claim.lease.owner);
     } finally {
-      await a.close();
+      await authority.close();
     }
   }
 });
 
 it("copied issued lease with identical owner and epoch cannot open Storage", async () => {
-  const f = await memoryFixture(true);
-  const copy = { ...f.lease } as Lease;
+  const fixture = await memoryFixture(true);
+  const copy = { ...fixture.lease } as Lease;
   let unexpected: Storage | undefined;
   try {
-    expect(copy).toEqual(f.lease);
-    expect(copy).not.toBe(f.lease);
-    const result = await f.backend.openStorage(copy).then(
+    expect(copy).toEqual(fixture.lease);
+    expect(copy).not.toBe(fixture.lease);
+    const result = await fixture.backend.openStorage(copy).then(
       (storage) => {
         unexpected = storage;
         return "opened";
@@ -291,31 +291,35 @@ it("copied issued lease with identical owner and epoch cannot open Storage", asy
     );
     expect(result).toBeInstanceOf(Error);
     expect(result).toMatchObject({ message: "Stale owner epoch or sequence" });
-    const issued = await f.backend.openStorage(f.lease);
+    const issued = await fixture.backend.openStorage(fixture.lease);
     try {
-      expect(await issued.mintId()).toBe(f.firstId);
+      expect(await issued.mintId()).toBe(fixture.firstId);
     } finally {
       await issued.close(context);
     }
   } finally {
     await unexpected?.close(context);
-    await f.finish();
+    await fixture.finish();
   }
 });
 
-for (const operation of ["mintId", "commit"] as const)
-  for (const applied of [false, true])
+for (const operation of ["mintId", "commit"] as const) {
+  for (const applied of [false, true]) {
     it(`memory worker boundary unknown ${operation} applied=${applied} retains ownership`, async () => {
-      const f = await memoryFixture();
-      await f.authority.release(f.lease);
-      f.advance(1);
-      const objects = objectFixture(),
-        events: string[] = [];
+      const fixture = await memoryFixture();
+      await fixture.authority.release(fixture.lease);
+      fixture.advance(1);
+      const objects = objectFixture();
+      const events: string[] = [];
       let wrapped: Storage | undefined;
       const backend = {
-        ...f.backend,
-        openStorage: async (lease: Parameters<typeof f.backend.openStorage>[0]) =>
-          (wrapped = loseAcknowledgement(await f.backend.openStorage(lease), operation, applied)),
+        ...fixture.backend,
+        openStorage: async (lease: Parameters<typeof fixture.backend.openStorage>[0]) =>
+          (wrapped = loseAcknowledgement(
+            await fixture.backend.openStorage(lease),
+            operation,
+            applied,
+          )),
       };
       const deps = runtimeDependencies({
         backend,
@@ -325,14 +329,14 @@ for (const operation of ["mintId", "commit"] as const)
         rootAgent: {},
       });
       try {
-        await expect(worker(f.ns, () => 45000, deps)).rejects.toThrow("unknown");
+        await expect(worker(fixture.ns, () => 45000, deps)).rejects.toThrow("unknown");
         expect(events).not.toContain("release");
-        expect(await f.authority.claim(f.ns, 45000)).toEqual({ kind: "held" });
-        expect(await f.authority.hasWork(f.ns)).toBe(true);
-        await f.expire();
-        const c = await f.authority.claim(f.ns, 45000);
+        expect(await fixture.authority.claim(fixture.ns, 45000)).toEqual({ kind: "held" });
+        expect(await fixture.authority.hasWork(fixture.ns)).toBe(true);
+        await fixture.expire();
+        const c = await fixture.authority.claim(fixture.ns, 45000);
         check(c.kind === "claimed", "claim");
-        const current = await f.backend.openStorage(c.lease);
+        const current = await fixture.backend.openStorage(c.lease);
         try {
           expect(await current.mintId()).toBeGreaterThanOrEqual(applied ? 3 : 2);
         } finally {
@@ -341,6 +345,8 @@ for (const operation of ["mintId", "commit"] as const)
         expect(objects.openHandles()).toBe(0);
       } finally {
         await wrapped?.close(context);
-        await f.finish();
+        await fixture.finish();
       }
     });
+  }
+}

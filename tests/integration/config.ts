@@ -1,7 +1,10 @@
 import { inject } from "vitest";
 import { postgresProvider, type SqlProvider } from "../../src/sql/connection.ts";
 
-export type PostgresFixture = { port: number; password: string };
+export interface PostgresFixture {
+  port: number;
+  password: string;
+}
 
 declare module "vitest" {
   export interface ProvidedContext {

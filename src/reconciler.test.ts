@@ -28,20 +28,20 @@ class Dispatcher {
   async wake(ns: HarnessId) {
     expect(this.authority.closes).toBe(1);
     this.attempts.push(ns);
-    if (this.failure === ns) throw Error("private transport outcome unknown");
+    if (this.failure === ns) throw new Error("private transport outcome unknown");
   }
 }
 class Dependencies implements ReconcilerDependencies {
   authority = new Authority();
   dispatch = new Dispatcher(this.authority);
-  events: Record<string, unknown>[] = [];
+  events: Array<Record<string, unknown>> = [];
   observerThrows = false;
   async connectAuthority() {
     return this.authority;
   }
   event(name: string, fields: Record<string, unknown>) {
     this.events.push({ name, ...fields });
-    if (this.observerThrows) throw Error("observer");
+    if (this.observerThrows) throw new Error("observer");
   }
 }
 
@@ -58,7 +58,7 @@ it("continues after a rejected wake without retry or false delivery claims", asy
   const deps = new Dependencies();
   deps.dispatch.failure = candidates[1]!;
   deps.observerThrows = true;
-  deps.authority.closeError = Error("private close failure");
+  deps.authority.closeError = new Error("private close failure");
   expect(await reconcile(deps)).toBe(5);
   expect(deps.authority.closes).toBe(1);
   expect(deps.dispatch.attempts).toEqual(candidates);
@@ -71,9 +71,9 @@ it("continues after a rejected wake without retry or false delivery claims", asy
 
 it("preserves the discovery error over close and observer failures without dispatch", async () => {
   const deps = new Dependencies();
-  const cause = Error("primary discovery cause");
+  const cause = new Error("primary discovery cause");
   deps.authority.discoveryError = cause;
-  deps.authority.closeError = Error("secondary close cause");
+  deps.authority.closeError = new Error("secondary close cause");
   deps.observerThrows = true;
   await expect(reconcile(deps)).rejects.toBe(cause);
   expect(deps.authority.discoveries).toBe(1);
@@ -84,7 +84,7 @@ it("preserves the discovery error over close and observer failures without dispa
 
 it("propagates acquisition failure without inventing a handle to close or a result", async () => {
   const deps = new Dependencies();
-  const cause = Error("acquire");
+  const cause = new Error("acquire");
   deps.connectAuthority = async () => {
     throw cause;
   };

@@ -20,6 +20,7 @@ class IssuedLease {
   }
 }
 
+/** Nominal, immutable authority-issued ownership. A copied structural value is not a lease. */
 export type Lease = IssuedLease;
 
 export function issueLease(ns: HarnessId, owner: OwnerToken, epoch: Epoch, until: number): Lease {

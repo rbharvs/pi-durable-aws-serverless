@@ -21,7 +21,7 @@ it("lost API wake leaves a durable receipt; fresh discovery and explicit deliver
     dispatch: {
       async wake() {
         failedWakes++;
-        throw Error("lost API wake");
+        throw new Error("lost API wake");
       },
     },
   });
@@ -98,7 +98,7 @@ it("reconciliation waits for expiry after a real submit-before-map failure and t
     authority.markAdmitted = async (receipt, id) => {
       if (cut) {
         cut = false;
-        throw Error("mapping cut");
+        throw new Error("mapping cut");
       }
       await mark(receipt, id);
     };
@@ -163,7 +163,7 @@ it("a partial dispatch failure attempts only the five discovered PG candidates a
         dispatch: {
           async wake(ns) {
             await f.dispatch.wake(ns);
-            if (ns === candidates[1]) throw Error("lost delivery acknowledgement");
+            if (ns === candidates[1]) throw new Error("lost delivery acknowledgement");
           },
         },
       }),
@@ -179,28 +179,29 @@ it("a partial dispatch failure attempts only the five discovered PG candidates a
         [f.ns],
       ),
     ).toEqual(before);
-    for (const ns of candidates)
+    for (const ns of candidates) {
       expect((await f.authority.received(ns)).map((r) => r.request)).toEqual(["one"]);
+    }
   } finally {
     await f.finish();
   }
 });
 
 it("a real discovery connection closes once and retains the primary query error despite cleanup and observer failures", async () => {
-  const cause = Error("private discovery failure");
+  const cause = new Error("private discovery failure");
   const client = wrap(
     await provider.connect(),
     faultOnce("before", "SELECT h.ns", () => cause),
   );
   let closes = 0;
-  const events: Record<string, unknown>[] = [];
+  const events: Array<Record<string, unknown>> = [];
   const authority = new SqlAuthority(
     new Database({
       query: client.query.bind(client),
       async end() {
         closes++;
         await client.end();
-        throw Error("secondary close acknowledgement");
+        throw new Error("secondary close acknowledgement");
       },
     }),
     provider,
@@ -212,12 +213,12 @@ it("a real discovery connection closes once and retains the primary query error 
       },
       dispatch: {
         async wake() {
-          throw Error("must not dispatch");
+          throw new Error("must not dispatch");
         },
       },
       event(name, fields) {
         events.push({ name, ...fields });
-        throw Error("observer");
+        throw new Error("observer");
       },
     }),
   ).rejects.toBe(cause);

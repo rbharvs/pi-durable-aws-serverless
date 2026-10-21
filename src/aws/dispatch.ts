@@ -61,7 +61,9 @@ export function dispatcher(
     close() {
       if (closed) return;
       closed = true;
-      for (const controller of active) controller.abort();
+      for (const controller of active) {
+        controller.abort();
+      }
       client?.destroy();
     },
   };

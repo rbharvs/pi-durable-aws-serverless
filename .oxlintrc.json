@@ -1,4 +1,9 @@
 {
   "ignorePatterns": ["dist/**"],
-  "rules": {}
+  "rules": {
+    "one-var": ["error", "never"],
+    "curly": ["error", "multi-line"],
+    "unicorn/throw-new-error": "error",
+    "typescript/consistent-type-definitions": ["error", "interface"]
+  }
 }

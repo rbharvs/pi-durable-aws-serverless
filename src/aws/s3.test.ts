@@ -58,7 +58,7 @@ it("actual immutable SDK adapter keeps published bytes independent of staging an
   expect(f.streams.every((body) => body.destroyed)).toBe(true);
 });
 
-for (const outcome of ["success", "missing-checksum", "lost-ack", "conditional-retry"] as const)
+for (const outcome of ["success", "missing-checksum", "lost-ack", "conditional-retry"] as const) {
   it(`publication ${outcome} uses one conditional key, confirmed bytes, no overwrite or application retry`, async () => {
     const f = clientFixture();
     const primary = new S3ServiceException({
@@ -66,11 +66,11 @@ for (const outcome of ["success", "missing-checksum", "lost-ack", "conditional-r
       $fault: "client",
       $metadata: { httpStatusCode: outcome === "conditional-retry" ? 412 : undefined },
     });
-    if (outcome === "success")
+    if (outcome === "success") {
       f.send.mockResolvedValueOnce({ $metadata: {}, ChecksumSHA256: checksum } as never);
-    else if (outcome === "missing-checksum")
+    } else if (outcome === "missing-checksum") {
       f.send.mockResolvedValueOnce({ $metadata: {} } as never);
-    else f.send.mockRejectedValueOnce(primary);
+    } else f.send.mockRejectedValueOnce(primary);
     f.send.mockResolvedValueOnce({
       $metadata: {},
       ContentLength: ref.bytes,
@@ -101,19 +101,21 @@ for (const outcome of ["success", "missing-checksum", "lost-ack", "conditional-r
       f.store.close();
     }
   });
+}
 
-for (const head of ["missing", "wrong-size", "wrong-checksum"] as const)
+for (const head of ["missing", "wrong-size", "wrong-checksum"] as const) {
   it(`uncertain PUT with ${head} HEAD stays uncertain and preserves the primary failure`, async () => {
     const f = clientFixture();
-    const primary = Error("write acknowledgment unknown");
+    const primary = new Error("write acknowledgment unknown");
     f.send.mockRejectedValueOnce(primary);
-    if (head === "missing") f.send.mockRejectedValueOnce(Error("head unavailable"));
-    else
+    if (head === "missing") f.send.mockRejectedValueOnce(new Error("head unavailable"));
+    else {
       f.send.mockResolvedValueOnce({
         $metadata: {},
         ContentLength: head === "wrong-size" ? ref.bytes + 1 : ref.bytes,
         ChecksumSHA256: head === "wrong-checksum" ? "bad" : checksum,
       } as never);
+    }
     try {
       await expect(f.store.put(json)).rejects.toBe(primary);
       expect(f.send).toHaveBeenCalledTimes(2);
@@ -121,6 +123,7 @@ for (const head of ["missing", "wrong-size", "wrong-checksum"] as const)
       f.store.close();
     }
   });
+}
 
 it("validates namespace, size, JSON and closed handles before SDK I/O", async () => {
   const f = clientFixture();
@@ -154,20 +157,21 @@ it("validates namespace, size, JSON and closed handles before SDK I/O", async ()
   }
 });
 
-for (const fault of ["missing", "denied", "server", "transfer"] as const)
+for (const fault of ["missing", "denied", "server", "transfer"] as const) {
   it(`staged ${fault} has truthful material-versus-transport classification through the API root`, async () => {
     const f = clientFixture();
     const backend = createMemoryBackend();
     let error: Error;
-    if (fault === "missing")
+    if (fault === "missing") {
       error = new NoSuchKey({ $metadata: { httpStatusCode: 404 }, message: "missing" });
-    else
+    } else {
       error = new S3ServiceException({
         name: fault === "denied" ? "AccessDenied" : "ServiceUnavailable",
         $fault: "server",
         $metadata: { httpStatusCode: fault === "denied" ? 403 : 503 },
         message: "private provider message",
       });
+    }
     if (fault === "transfer") {
       const stream = Readable.from(
         (async function* () {
@@ -183,7 +187,7 @@ for (const fault of ["missing", "denied", "server", "transfer"] as const)
       objects: () => f.store,
       dispatch: {
         wake: async () => {
-          throw Error("unexpected wake");
+          throw new Error("unexpected wake");
         },
       },
       event: (name, fields) => events.push({ name, ...fields }),
@@ -204,8 +208,9 @@ for (const fault of ["missing", "denied", "server", "transfer"] as const)
     ]);
     expect(f.destroy).toHaveBeenCalledTimes(1);
   });
+}
 
-for (const kind of ["no-body", "wrong-length", "overflow", "short"] as const)
+for (const kind of ["no-body", "wrong-length", "overflow", "short"] as const) {
   it(`body boundary rejects ${kind} and destroys every acquired stream`, async () => {
     const f = clientFixture();
     const body = Readable.from([
@@ -238,6 +243,7 @@ for (const kind of ["no-body", "wrong-length", "overflow", "short"] as const)
       f.store.close();
     }
   });
+}
 
 it("consumer early return destroys the SDK body; close also destroys a never-consumed body", async () => {
   const f = clientFixture();
@@ -246,7 +252,9 @@ it("consumer early return destroys the SDK body; close also destroys a never-con
     .mockResolvedValueOnce({ $metadata: {}, Body: bodies[0] } as never)
     .mockResolvedValueOnce({ $metadata: {}, Body: bodies[1] } as never);
   const stream = await f.store.getStaged(ref);
-  for await (const _chunk of stream) break;
+  for await (const _chunk of stream) {
+    break;
+  }
   expect(bodies[0].destroyed).toBe(true);
   await f.store.getStaged(ref);
   f.store.close();
@@ -270,7 +278,7 @@ it("a stalled SDK body has a finite abort deadline, releases transport, and rema
   f.store.close();
 });
 
-for (const kind of ["hash", "utf8", "json", "bom"] as const)
+for (const kind of ["hash", "utf8", "json", "bom"] as const) {
   it(`published reads independently verify ${kind} after bounded transfer`, async () => {
     const f = clientFixture();
     const bytes =
@@ -294,6 +302,7 @@ for (const kind of ["hash", "utf8", "json", "bom"] as const)
       f.store.close();
     }
   });
+}
 
 it("GET requests carry only the fixed bucket, validated key and checksum mode", async () => {
   const f = clientFixture();

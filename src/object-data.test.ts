@@ -37,7 +37,7 @@ it("isolates an asynchronous destruction error after stopping early", async () =
       this.push(Buffer.from("too long"));
     },
     destroy(_error, callback) {
-      setImmediate(() => callback(Error("private cleanup failure")));
+      setImmediate(() => callback(new Error("private cleanup failure")));
     },
   });
   const closed = new Promise<void>((resolve) => body.once("close", resolve));
@@ -60,7 +60,7 @@ it("copies chunks, so a producer cannot change bytes after they are read", async
 });
 
 it("propagates transport failures unchanged", async () => {
-  const cause = Error("private transport failure");
+  const cause = new Error("private transport failure");
   const body = Readable.from(
     (async function* () {
       yield Buffer.from("{");

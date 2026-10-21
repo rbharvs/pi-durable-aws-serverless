@@ -145,8 +145,9 @@ export class ImmutableObjects implements CommandObjects {
         operation.finish();
       });
       addAbortSignal(operation.signal, body);
-      if (result.ContentLength !== undefined && result.ContentLength !== ref.bytes)
-        throw new ObjectInvalid(Error("Object length mismatch"));
+      if (result.ContentLength !== undefined && result.ContentLength !== ref.bytes) {
+        throw new ObjectInvalid(new Error("Object length mismatch"));
+      }
       return body;
     } catch (error) {
       body?.destroy();

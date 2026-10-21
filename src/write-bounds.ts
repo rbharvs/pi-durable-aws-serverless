@@ -4,16 +4,18 @@ import { EnvelopeRejected } from "./payload.ts";
 
 /** Detach at invocation; validation, indexes and payloads all use this same JSON value. */
 export function freezeWrites(writes: readonly StorageWrite[]): readonly StorageWrite[] {
-  if (writes.length + 1 > LIMITS.maxRows)
+  if (writes.length + 1 > LIMITS.maxRows) {
     throw new EnvelopeRejected("Atomic envelope exceeded: write count");
+  }
 
   // Clone first: caller getters run once and custom prototypes cannot hide stored fields
   // from the budget. Normalize undefined/nonfinite values and built-in toJSON values once.
   const json = JSON.stringify(structuredClone(writes));
   const logicalBytes = Buffer.byteLength(json);
 
-  if (logicalBytes > LIMITS.maxLogicalCommitBytes)
+  if (logicalBytes > LIMITS.maxLogicalCommitBytes) {
     throw new EnvelopeRejected("Logical commit exceeds 32 MiB memory bound");
+  }
 
   return JSON.parse(json);
 }
@@ -34,6 +36,8 @@ export function writeId(write: StorageWrite): number {
 
 export function storedHighWater(writes: readonly StorageWrite[]): number {
   let next = 2;
-  for (const write of writes) next = Math.max(next, writeId(write) + 1);
+  for (const write of writes) {
+    next = Math.max(next, writeId(write) + 1);
+  }
   return next;
 }

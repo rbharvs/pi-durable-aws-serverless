@@ -72,14 +72,14 @@ it("supersedes an invalid previous inline body without parsing it, while reads s
   }
 });
 
-for (const kind of ["inline", "s3"] as const)
+for (const kind of ["inline", "s3"] as const) {
   for (const corrupt of [
     "missing",
     "wrong-kind",
     "both-present",
     "invalid-ref",
     ...(kind === "s3" ? ["invalid-digest", "foreign-object"] : []),
-  ])
+  ]) {
     it(`rejects ${corrupt} ${kind} replacement ownership before uploads or publication`, async () => {
       const f = await historyFixture("replacement_corrupt", { objects: memoryObjects });
       try {
@@ -99,40 +99,46 @@ for (const kind of ["inline", "s3"] as const)
           (await f.control.query("SELECT payload_ref FROM records WHERE ns=$1", [f.ns]))[0]!
             .payload_ref,
         );
-        if (corrupt === "missing")
+        if (corrupt === "missing") {
           await f.control.query(
             `DELETE FROM ${kind === "inline" ? "inline_payloads" : "s3_payloads"} WHERE ns=$1`,
             [f.ns],
           );
-        if (corrupt === "wrong-kind")
+        }
+        if (corrupt === "wrong-kind") {
           await f.control.query("UPDATE records SET payload_kind=$2 WHERE ns=$1", [
             f.ns,
             kind === "inline" ? "s3" : "inline",
           ]);
+        }
         if (corrupt === "both-present") {
-          if (kind === "inline")
+          if (kind === "inline") {
             await f.control.query(
               "INSERT INTO s3_payloads(ns,payload_ref,object_key,sha256,bytes) VALUES($1,$2,$3,$4,2)",
               [f.ns, ref, `p/${f.ns}/${randomUUID()}`, computeSha256("{}")],
             );
-          else
+          } else {
             await f.control.query(
               "INSERT INTO inline_payloads(ns,payload_ref,json) VALUES($1,$2,'{}')",
               [f.ns, ref],
             );
+          }
         }
-        if (corrupt === "invalid-ref")
+        if (corrupt === "invalid-ref") {
           await f.control.query(
             "UPDATE records SET payload_ref='00000000-0000-0000-0000-000000000000' WHERE ns=$1",
             [f.ns],
           );
-        if (corrupt === "invalid-digest")
+        }
+        if (corrupt === "invalid-digest") {
           await f.control.query("UPDATE s3_payloads SET sha256='BAD' WHERE ns=$1", [f.ns]);
-        if (corrupt === "foreign-object")
+        }
+        if (corrupt === "foreign-object") {
           await f.control.query("UPDATE s3_payloads SET object_key=$2 WHERE ns=$1", [
             f.ns,
             `p/foreign/${randomUUID()}`,
           ]);
+        }
         const before = await f.snapshot();
         f.trace.length = 0;
         f.memory.operations.length = 0;
@@ -148,11 +154,14 @@ for (const kind of ["inline", "s3"] as const)
         expect(await f.snapshot()).toEqual(before);
       } finally {
         // These tests deliberately sever references. Remove only their exact corrupt namespace.
-        for (const table of ["records", "inline_payloads", "s3_payloads"])
+        for (const table of ["records", "inline_payloads", "s3_payloads"]) {
           await f.control.query(`DELETE FROM ${table} WHERE ns=$1`, [f.ns]);
+        }
         await f.finish();
       }
     });
+  }
+}
 
 it("relinks and deletes each intermediate payload through inline → S3 → inline replacements in one fenced commit", async () => {
   const f = await historyFixture("replacement_chain", { objects: memoryObjects });
@@ -318,7 +327,7 @@ it("keeps the previous offloaded owner visible when a later replacement transact
     hook: async (phase, sql) => {
       if (armed && phase === "after" && sql.startsWith("DELETE FROM s3_payloads")) {
         armed = false;
-        throw Error("replacement failed before COMMIT");
+        throw new Error("replacement failed before COMMIT");
       }
     },
   });

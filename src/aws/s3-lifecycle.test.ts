@@ -25,7 +25,7 @@ async function wire(respond: RequestListener) {
   const server = createServer(respond);
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   const address = server.address();
-  if (!address || typeof address === "string") throw Error("Missing loopback address");
+  if (!address || typeof address === "string") throw new Error("Missing loopback address");
   const client = new S3Client({
     ...aws,
     maxAttempts: 1,
@@ -61,7 +61,7 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-for (const fault of ["caller-hash", "content-length", "missing", "sdk-checksum"] as const)
+for (const fault of ["caller-hash", "content-length", "missing", "sdk-checksum"] as const) {
   it(`loopback SDK staging classifies ${fault} through the public API`, async () => {
     const missing = fault === "missing";
     const body = missing ? Buffer.from("<Error><Code>NoSuchKey</Code></Error>") : raw;
@@ -114,6 +114,7 @@ for (const fault of ["caller-hash", "content-length", "missing", "sdk-checksum"]
       await f.close();
     }
   });
+}
 
 it("loopback published reads reject a caller hash mismatch despite a valid SDK checksum", async () => {
   const f = await wire((_request, response) => {
@@ -138,7 +139,7 @@ it("loopback published reads reject a caller hash mismatch despite a valid SDK c
   }
 });
 
-for (const closing of [false, true])
+for (const closing of [false, true]) {
   it(`loopback body is destroyed by ${closing ? "close" : "deadline"} without SDK destroy assistance`, async () => {
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     const f = await wire(stalled);
@@ -160,6 +161,7 @@ for (const closing of [false, true])
       await f.close();
     }
   });
+}
 
 it("an SDK response held past close returns an already-aborted body safely", async () => {
   const f = await wire(stalled);
@@ -209,7 +211,7 @@ it("completed loopback reads release their deadline and active close ownership",
 
 it("an unread SDK body error survives completion cleanup as the primary read error", async () => {
   const f = await wire(stalled);
-  const primary = Error("transfer failed");
+  const primary = new Error("transfer failed");
   try {
     const body = (await f.store.getStaged(ref)) as Readable;
     body.destroy(primary);

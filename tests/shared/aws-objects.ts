@@ -14,7 +14,7 @@ import { aws } from "./aws.ts";
 /** Actual SDK clients/commands with an offline terminal middleware, NOT an S3 service emulator. */
 export function sdkObjects() {
   const bytes = new Map<string, Buffer>();
-  const calls: { name: string; input: GetObjectCommandInput | PutObjectCommandInput }[] = [];
+  const calls: Array<{ name: string; input: GetObjectCommandInput | PutObjectCommandInput }> = [];
   const streams: Readable[] = [];
   let handles = 0;
   return {
@@ -56,29 +56,33 @@ export function sdkObjects() {
               put.ChecksumSHA256 === checksum && put.ContentLength === body.length,
               "Upload integrity",
             );
-            if (bytes.has(input.Key))
+            if (bytes.has(input.Key)) {
               throw new S3ServiceException({
                 name: "PreconditionFailed",
                 $fault: "client",
                 $metadata: { httpStatusCode: 412 },
               });
+            }
             bytes.set(input.Key, body);
             return { response: {}, output: { $metadata: {}, ChecksumSHA256: checksum } };
           }
           const body = bytes.get(input.Key);
-          if (!body)
+          if (!body) {
             throw new NoSuchKey({ $metadata: { httpStatusCode: 404 }, message: "missing" });
+          }
           const metadata = {
             ContentLength: body.length,
             ChecksumSHA256: Buffer.from(computeSha256(body), "hex").toString("base64"),
           };
-          if (context.commandName === "HeadObjectCommand")
+          if (context.commandName === "HeadObjectCommand") {
             return { response: {}, output: { $metadata: {}, ...metadata } };
+          }
           check(context.commandName === "GetObjectCommand", "Unexpected object command");
           const stream = Readable.from(
             (function* () {
-              for (let i = 0; i < body.length; i += 16384)
+              for (let i = 0; i < body.length; i += 16384) {
                 yield Buffer.from(body.subarray(i, i + 16384));
+              }
             })(),
           );
           streams.push(stream);

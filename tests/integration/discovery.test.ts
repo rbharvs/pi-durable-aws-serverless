@@ -76,18 +76,20 @@ it("returns exactly five by lease expiry then namespace, excluding owned and idl
     x: -600,
   };
   try {
-    for (const name of Object.keys(offsets))
+    for (const name of Object.keys(offsets)) {
       await f.authority.receive(ns(name), requestId("one"), input);
+    }
     expect((await f.authority.claim(ns("owned"), 45000)).kind).toBe("claimed");
     const db = f.authority.inspectionDb;
     await db.query("DELETE FROM inbox WHERE ns=$1", [ns("idle")]);
     await db.query("BEGIN");
     try {
-      for (const [name, offset] of Object.entries(offsets))
+      for (const [name, offset] of Object.entries(offsets)) {
         await db.query(`UPDATE harness SET lease_until=${DB_NOW_MS}+$2::bigint WHERE ns=$1`, [
           ns(name),
           offset,
         ]);
+      }
       expect(await f.authority.eligible()).toEqual(["z", "y", "a", "b", "x"].map(ns));
     } finally {
       await db.query("ROLLBACK");
@@ -170,7 +172,9 @@ it("receipt page uses received_at before request_id with exact eight-item cutoff
       await f.control.query("ROLLBACK");
     }
     expect(await f.control.query(plannerSettings)).toEqual(before);
-    for (const receipt of page) await f.authority.markAdmitted(receipt, done.value.id);
+    for (const receipt of page) {
+      await f.authority.markAdmitted(receipt, done.value.id);
+    }
     expect((await f.authority.received(f.ns)).map((r) => r.request)).toEqual(["j", "a"]);
   } finally {
     await f.finish();

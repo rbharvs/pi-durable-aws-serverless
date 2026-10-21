@@ -49,7 +49,7 @@ it("checks returned object bytes itself, even when the object adapter returns un
   }
 });
 
-for (const wrong of ["bytes", "sha256", "namespace"] as const)
+for (const wrong of ["bytes", "sha256", "namespace"] as const) {
   it(`rejects an upload adapter's wrong ${wrong} before write BEGIN`, async () => {
     const f = await historyFixture("unchecked_put", {
       objects: (_ns, objects) => ({
@@ -75,6 +75,7 @@ for (const wrong of ["bytes", "sha256", "namespace"] as const)
       await f.finish();
     }
   });
+}
 
 it("one fork-aware read uses one snapshot even when another connection publishes during ancestry lookup", async () => {
   let armed = false;
@@ -104,9 +105,9 @@ it("one fork-aware read uses one snapshot even when another connection publishes
   }
 });
 
-for (const operation of ["read", "validation"] as const)
+for (const operation of ["read", "validation"] as const) {
   it(`resets the connection after an unknown ${operation} BEGIN acknowledgement`, async () => {
-    const failure = Error("lost read-BEGIN acknowledgement");
+    const failure = new Error("lost read-BEGIN acknowledgement");
     let armed = true;
     const f = await historyFixture("begin_recovery", {
       hook: async (phase, sql) => {
@@ -132,6 +133,7 @@ for (const operation of ["read", "validation"] as const)
       await f.finish();
     }
   });
+}
 
 it("keeps SQL integrity expectations when an object adapter rewrites its passed reference", async () => {
   const f = await historyFixture("get_reference_mutation", {
@@ -212,7 +214,7 @@ const invalidWriteNumbers = [
   })),
 ];
 
-for (const { name, write } of invalidWriteNumbers)
+for (const { name, write } of invalidWriteNumbers) {
   it(`rejects ${name} before allocation arithmetic, SQL or object publication`, async () => {
     const f = await historyFixture("numeric_index_boundary", { objects: memoryObjects });
     try {
@@ -230,6 +232,7 @@ for (const { name, write } of invalidWriteNumbers)
       await f.finish();
     }
   });
+}
 
 it("does not let PostgreSQL coerce numeric-string lookup IDs or filters", async () => {
   const f = await historyFixture("strict_lookups");
@@ -302,8 +305,8 @@ it("does not let PostgreSQL coerce numeric-string lookup IDs or filters", async 
 });
 
 it("a known stale publication fails the handle before queued work can upload again", async () => {
-  const reached = deferred(),
-    proceed = deferred();
+  const reached = deferred();
+  const proceed = deferred();
   const f = await historyFixture("stale_publication", {
     hook: async (phase, sql) => {
       if (phase === "before" && sql.startsWith("UPDATE harness SET next_seq")) {
@@ -345,7 +348,7 @@ it("a known stale publication fails the handle before queued work can upload aga
   }
 });
 
-for (const point of [0, Number.MAX_SAFE_INTEGER])
+for (const point of [0, Number.MAX_SAFE_INTEGER]) {
   it(`stores numeric head/fork point ${point} and reads it after reopen like public MemoryStorage`, async () => {
     const f = await historyFixture("metadata_points");
     const memory = new MemoryStorage();
@@ -391,8 +394,9 @@ for (const point of [0, Number.MAX_SAFE_INTEGER])
       await f.finish();
     }
   });
+}
 
-for (const selector of [0, -5])
+for (const selector of [0, -5]) {
   it(`safe numeric selector ${selector} matches public MemoryStorage without a positive floor`, async () => {
     const f = await historyFixture("read_selectors");
     const memory = new MemoryStorage();
@@ -407,8 +411,8 @@ for (const selector of [0, -5])
     try {
       await f.storage.commit(writes, context);
       await memory.commit(writes, context);
-      const id = entryId(selector),
-        conv = conversationId(selector);
+      const id = entryId(selector);
+      const conv = conversationId(selector);
       for (const store of [f.storage, memory]) {
         expect(await store.conversation(conv, context)).toBeUndefined();
         expect(await store.entry(id, context)).toBeUndefined();
@@ -463,3 +467,4 @@ for (const selector of [0, -5])
       await f.finish();
     }
   });
+}

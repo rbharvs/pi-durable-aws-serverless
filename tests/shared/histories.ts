@@ -27,13 +27,13 @@ export type Operation =
  * No SQL, indexes, payload representation or retry selectors or production work predicate in the oracle.
  */
 export async function runHistory(
-  f: ContractFixture,
+  fixture: ContractFixture,
   operations: readonly Operation[],
 ): Promise<void> {
-  let lease = f.lease,
-    s = await f.backend.openStorage(lease),
-    maximum = 1,
-    ordinal = 0;
+  let lease = fixture.lease;
+  let storage = await fixture.backend.openStorage(lease);
+  let maximum = 1;
+  let ordinal = 0;
   const entries = new Map<number, string>();
   const objects = memoryObjectsFixture();
 
@@ -68,34 +68,34 @@ export async function runHistory(
   }
 
   const reopen = async () => {
-    await s.close(context);
-    s = await f.backend.openStorage(lease);
+    await storage.close(context);
+    storage = await fixture.backend.openStorage(lease);
   };
 
-  await s.commit(
+  await storage.commit(
     [{ type: "conversation", value: { id: idFromNumber<ConversationId>(1) } }],
     context,
   );
 
   try {
-    for (const op of operations) {
+    for (const operation of operations) {
       ordinal++;
 
-      switch (op.kind) {
+      switch (operation.kind) {
         case "mint":
-          allocated(await s.mintId());
+          allocated(await storage.mintId());
           break;
 
         case "reopen":
           await reopen();
-          allocated(await s.mintId());
+          allocated(await storage.mintId());
           break;
 
         case "store": {
-          const id = maximum + 10,
-            label = `stored-${ordinal}`;
+          const id = maximum + 10;
+          const label = `stored-${ordinal}`;
 
-          await s.commit([entry(id, label)], context);
+          await storage.commit([entry(id, label)], context);
           maximum = id;
           entries.set(id, label);
           break;
@@ -105,7 +105,7 @@ export async function runHistory(
           const id = maximum + 1;
 
           await assert.rejects(
-            s.commit(
+            storage.commit(
               [
                 entry(id, "never"),
                 {
@@ -120,16 +120,16 @@ export async function runHistory(
         }
 
         case "takeover": {
-          await f.expire();
+          await fixture.expire();
 
-          const c = await f.authority.claim(f.ns, 45000);
+          const claim = await fixture.authority.claim(fixture.ns, 45000);
 
-          check(c.kind === "claimed", "takeover");
+          check(claim.kind === "claimed", "takeover");
 
-          const old = s;
+          const old = storage;
 
-          lease = c.lease;
-          s = await f.backend.openStorage(lease);
+          lease = claim.lease;
+          storage = await fixture.backend.openStorage(lease);
           await assert.rejects(old.commit([entry(maximum + 1, "stale")], context));
           await assert.rejects(old.mintId());
           await old.close(context);
@@ -138,16 +138,16 @@ export async function runHistory(
         }
 
         case "unknown-mint": {
-          const wrapped = loseAcknowledgement(s, "mintId", op.applied);
+          const wrapped = loseAcknowledgement(storage, "mintId", operation.applied);
 
           await assert.rejects(wrapped.mintId());
           await assert.rejects(wrapped.mintId());
           await wrapped.close(context);
-          s = await f.backend.openStorage(lease);
-          const next = await s.mintId();
+          storage = await fixture.backend.openStorage(lease);
+          const next = await storage.mintId();
           assert.equal(
             next,
-            maximum + (op.applied ? 2 : 1),
+            maximum + (operation.applied ? 2 : 1),
             "unknown allocation effect after reopen",
           );
           allocated(next);
@@ -155,29 +155,29 @@ export async function runHistory(
         }
 
         case "unknown-commit": {
-          const id = allocated(await s.mintId()),
-            label = `unknown-${ordinal}`;
-          const wrapped = loseAcknowledgement(s, "commit", op.applied);
+          const id = allocated(await storage.mintId());
+          const label = `unknown-${ordinal}`;
+          const wrapped = loseAcknowledgement(storage, "commit", operation.applied);
 
           await assert.rejects(wrapped.commit([entry(id, label)], context));
           await assert.rejects(wrapped.mintId());
           await wrapped.close(context);
-          s = await f.backend.openStorage(lease);
-          if (op.applied) entries.set(id, label);
+          storage = await fixture.backend.openStorage(lease);
+          if (operation.applied) entries.set(id, label);
           break;
         }
 
         case "transport-equivalence": {
-          const request = requestId(`transport-${ordinal}`),
-            input = { content: `value-${ordinal}`, whenBusy: "followUp" },
-            api = apiHandler({
-              connectAuthority: f.backend.connectAuthority,
-              objects: objects.objects,
-              dispatch: { wake: async () => {} },
-              event: () => {},
-            });
+          const request = requestId(`transport-${ordinal}`);
+          const input = { content: `value-${ordinal}`, whenBusy: "followUp" };
+          const api = apiHandler({
+            connectAuthority: fixture.backend.connectAuthority,
+            objects: objects.objects,
+            dispatch: { wake: async () => {} },
+            event: () => {},
+          });
           const first = await api({
-            ns: f.ns,
+            ns: fixture.ns,
             request,
             command: { kind: "inline", input },
           });
@@ -185,17 +185,20 @@ export async function runHistory(
           assert(first.ok && !first.duplicate);
 
           const ref = objects.stage(
-            f.ns,
+            fixture.ns,
             ` { "whenBusy":"followUp", "content":"value-${ordinal}" } `,
           );
 
-          assert.deepEqual(await api({ ns: f.ns, request, command: { kind: "s3", ...ref } }), {
-            ...first,
-            duplicate: true,
-          });
+          assert.deepEqual(
+            await api({ ns: fixture.ns, request, command: { kind: "s3", ...ref } }),
+            {
+              ...first,
+              duplicate: true,
+            },
+          );
           assert.deepEqual(
             await api({
-              ns: f.ns,
+              ns: fixture.ns,
               request,
               command: {
                 kind: "inline",
@@ -209,11 +212,11 @@ export async function runHistory(
         }
 
         case "submit-mark-gap": {
-          await s.close(context);
+          await storage.close(context);
 
-          const request = requestId(`gap-${ordinal}`),
-            a = f.authority;
-          const receipt = await a.receive(f.ns, request, {
+          const request = requestId(`gap-${ordinal}`);
+          const authority = fixture.authority;
+          const receipt = await authority.receive(fixture.ns, request, {
             hash: (await import("../../src/input.ts")).canonical({
               content: "gap",
               whenBusy: "followUp",
@@ -228,7 +231,7 @@ export async function runHistory(
 
           const open = async () =>
             Harness.open(
-              recordMints(await f.backend.openStorage(lease)),
+              recordMints(await fixture.backend.openStorage(lease)),
               { models: createModels(), registry: createRegistry() },
               context,
             );
@@ -254,23 +257,24 @@ export async function runHistory(
                 .id,
               id,
             );
-            await a.markAdmitted(receipt.item, id);
+            await authority.markAdmitted(receipt.item, id);
           } finally {
             await second.close(context);
           }
 
-          s = await f.backend.openStorage(lease);
+          storage = await fixture.backend.openStorage(lease);
 
           break;
         }
       }
 
       // Every completed operation checks safety, not just final state or expected rejection.
-      for (const [id, label] of entries)
-        assert.equal((await s.entry(idFromNumber<EntryId>(id), context))?.entry.data, label);
+      for (const [id, label] of entries) {
+        assert.equal((await storage.entry(idFromNumber<EntryId>(id), context))?.entry.data, label);
+      }
 
       const all = (
-        await s.scanEntries(
+        await storage.scanEntries(
           {
             conversationId: idFromNumber<ConversationId>(1),
             order: "ascending",
@@ -285,6 +289,6 @@ export async function runHistory(
       assert(!all.some((e) => e.data === "never" || e.data === "stale"));
     }
   } finally {
-    await s.close(context);
+    await storage.close(context);
   }
 }

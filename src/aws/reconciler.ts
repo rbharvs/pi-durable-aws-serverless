@@ -13,8 +13,15 @@ export function createHandler(compose: (ctx: LambdaContext) => Dependencies) {
       // Core reconcile calls dependency methods on deps, preserving their receivers.
       return await reconcile(deps);
     } finally {
-      if (deps.close)
-        await cleanup({ close: () => deps.close!() }, (n, f) => deps.event(n, f), "dispatch");
+      if (deps.close) {
+        await cleanup(
+          { close: () => deps.close!() },
+          (name, fields) => {
+            deps.event(name, fields);
+          },
+          "dispatch",
+        );
+      }
     }
   };
 }

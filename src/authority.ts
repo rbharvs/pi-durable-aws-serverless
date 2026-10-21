@@ -7,13 +7,13 @@ import type { StoredPayload } from "./payload.ts";
  * Validated canonical Pi input, inline or already durably published, and its canonical SHA-256.
  * SQL validates reference metadata, not object existence. Publishers guarantee immutability.
  */
-export type AcceptedInput = {
+export interface AcceptedInput {
   readonly hash: Sha256;
   readonly payload: StoredPayload;
-};
+}
 
 /** An immutable receipt for one request. */
-export type Received = {
+export interface Received {
   readonly kind: "received";
   /** The Harness ID that scopes request IDs. */
   readonly ns: HarnessId;
@@ -23,7 +23,7 @@ export type Received = {
   readonly payload: StoredPayload;
   /** Unix epoch milliseconds from the authority clock, fixed when the receipt was first stored. */
   readonly receivedAt: number;
-};
+}
 
 /** The original receipt with its durable submission mapping. */
 export type Admitted = Omit<Received, "kind"> & {
@@ -31,6 +31,7 @@ export type Admitted = Omit<Received, "kind"> & {
   readonly submission: SubmissionId;
 };
 
+/** A receipt stays immutable except for its monotonic mapping to an admitted submission. */
 export type InboxItem = Received | Admitted;
 
 /** Receipt storage. Each method is atomic; backing lifetime is adapter-specific. */
@@ -46,7 +47,9 @@ export interface Authority {
     request: RequestId,
     accepted: AcceptedInput,
   ): Promise<{ duplicate: boolean; item: InboxItem }>;
+  /** Claims only a strictly expired lease; remainingMs is the invocation budget, not a renewal. */
   claim(ns: HarnessId, remainingMs: number): Promise<Claim>;
+  /** Release only after joined Storage close; rejects uncertain writes rather than promising release. */
   release(lease: Lease): Promise<"released" | "lost">;
   /** At most eight unmapped receipts, oldest first. */
   received(ns: HarnessId): Promise<Received[]>;

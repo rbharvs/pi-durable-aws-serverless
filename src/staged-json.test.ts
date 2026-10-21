@@ -18,7 +18,7 @@ for (const [name, content] of [
       ...Array.from({ length: 56 }, () => textBlock),
     ],
   ],
-] as const)
+] as const) {
   it(`accepts ${name} without charging string contents against structure bounds`, () => {
     const input = { content, whenBusy: "followUp" };
     // Reordered fields and whitespace must not change canonical identity.
@@ -26,6 +26,7 @@ for (const [name, content] of [
 
     expect(staged(raw)).toEqual(canonical(input));
   });
+}
 
 it("handles Unicode-escaped punctuation, quotes, backslashes, and lone surrogates inside strings", () => {
   const raw = String.raw`{"content":"\u005b\u005d\u007b\u007d\u002c\u003a\u0022\u005c\ud800","whenBusy":"steer"}`;
@@ -67,10 +68,11 @@ for (const [name, raw, message] of [
     "{" + Array.from({ length: 2048 }, (_, index) => `"key${index}":0`).join(",") + "}",
     "Staged JSON has too much structure",
   ],
-] as const)
+] as const) {
   it(`rejects ${name} at the raw structure boundary`, () => {
     expect(() => staged(raw)).toThrow(message);
   });
+}
 
 for (const [name, discarded, message] of [
   ["deep", "[[[[]]]]", "Staged JSON nesting exceeds bounded depth"],
@@ -79,7 +81,7 @@ for (const [name, discarded, message] of [
     "[" + Array.from({ length: 2048 }, () => "{}").join(",") + "]",
     "Staged JSON has too much structure",
   ],
-] as const)
+] as const) {
   it(`counts discarded ${name} duplicate-key values rather than promising arbitrary last-key-wins parity`, () => {
     const raw = `{"content":${discarded},"content":"after","whenBusy":"followUp"}`;
 
@@ -87,6 +89,7 @@ for (const [name, discarded, message] of [
     expect(JSON.parse(raw)).toEqual({ content: "after", whenBusy: "followUp" });
     expect(() => staged(raw)).toThrow(message);
   });
+}
 
 it("accepts repeated array values within the raw structure budget", () => {
   const raw = '{"content":[],"content":[],"content":[],"whenBusy":"followUp"}';
@@ -104,10 +107,11 @@ for (const raw of [
   '{"content":"unterminated',
   '{"content":"bad\\',
   '{"content" "x","whenBusy":"steer"}',
-])
+]) {
   it(`leaves malformed JSON rejection to JSON.parse: ${raw}`, () => {
     expect(() => staged(raw)).toThrow();
   });
+}
 
 it("decodes multibyte UTF-8 but rejects malformed UTF-8 and a byte order mark", () => {
   const json = JSON.stringify({ content: "é🚀", whenBusy: "steer" });

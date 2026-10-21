@@ -11,12 +11,12 @@ afterEach(() => {
 });
 
 it("async dispatch uses the real signed Lambda request and correlation without inline work", async () => {
-  const requests: {
+  const requests: Array<{
     hostname: string;
     path: string;
     headers: Record<string, string>;
     body?: unknown;
-  }[] = [];
+  }> = [];
   const client = new LambdaClient({
     ...aws,
     maxAttempts: 1,
@@ -39,7 +39,7 @@ it("async dispatch uses the real signed Lambda request and correlation without i
     aws,
     (name, fields) => {
       events.push({ name, ...fields });
-      throw Error("observer");
+      throw new Error("observer");
     },
     "parent",
     client,
@@ -79,7 +79,7 @@ it("async dispatch uses the real signed Lambda request and correlation without i
   ]);
 });
 
-for (const status of [200, 204, undefined])
+for (const status of [200, 204, undefined]) {
   it(`status ${status} is not an acknowledged async delivery`, async () => {
     const client = new LambdaClient({ ...aws, maxAttempts: 1 });
     const send = vi
@@ -93,11 +93,12 @@ for (const status of [200, 204, undefined])
       dispatch.close();
     }
   });
+}
 
 it("close explicitly aborts active dispatch even when injected transport destroy does nothing", async () => {
   const started = Promise.withResolvers<AbortSignal>();
   const response = Promise.withResolvers<never>();
-  const abort = Error("explicit close abort");
+  const abort = new Error("explicit close abort");
   const transportDestroy = vi.fn();
   const client = new LambdaClient({
     ...aws,
@@ -144,7 +145,9 @@ it("dispatch has a finite abort, no application retry, receiver-safe close, and 
       ) {
         signal = options && (Reflect.get(options, "abortSignal") as AbortSignal);
         return new Promise((_resolve, reject) => {
-          signal!.addEventListener("abort", () => reject(Error("offline abort")), { once: true });
+          signal!.addEventListener("abort", () => reject(new Error("offline abort")), {
+            once: true,
+          });
         });
       },
     },

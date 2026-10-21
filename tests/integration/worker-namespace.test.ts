@@ -11,17 +11,17 @@ import {
 import { workerFixture } from "./worker-support.ts";
 
 it("rejects an actual foreign receipt before resolution or admission and retains both owners", async () => {
-  const local = await workerFixture("worker_local"),
-    foreign = await workerFixture("worker_foreign");
-  let lease: Lease | undefined,
-    resolves = 0,
-    reads = 0,
-    mappings = 0;
+  const local = await workerFixture("worker_local");
+  const foreign = await workerFixture("worker_foreign");
+  let lease: Lease | undefined;
+  let resolves = 0;
+  let reads = 0;
+  let mappings = 0;
   const deps = runtimeDependencies({
     ...local.options,
     objects(ns) {
-      const reader = foreign.objects.objects(ns),
-        get = reader.get.bind(reader);
+      const reader = foreign.objects.objects(ns);
+      const get = reader.get.bind(reader);
       reader.get = (ref) => {
         reads++;
         return get(ref);
@@ -53,8 +53,8 @@ it("rejects an actual foreign receipt before resolution or admission and retains
         return deps.resolve(item);
       },
       async connectAuthority() {
-        const authority = await deps.connectAuthority(),
-          mark = authority.markAdmitted.bind(authority);
+        const authority = await deps.connectAuthority();
+        const mark = authority.markAdmitted.bind(authority);
         // Faulty adapter returns a genuine durable receipt from a different namespace.
         authority.received = async () => [receipt];
         authority.markAdmitted = async (item, id) => {
@@ -82,7 +82,7 @@ it("rejects an actual foreign receipt before resolution or admission and retains
     } finally {
       await storage.close(context);
     }
-    expect(outcome).toEqual({ error: Error("Foreign receipt namespace") });
+    expect(outcome).toEqual({ error: new Error("Foreign receipt namespace") });
     expect(resolves).toBe(0);
     expect(reads).toBe(0);
     expect(mappings).toBe(0);

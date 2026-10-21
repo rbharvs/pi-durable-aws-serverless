@@ -10,19 +10,19 @@ import { harnessId, requestId, computeSha256 as sha } from "../../src/domain.ts"
 import type { Backend } from "../../src/authority.ts";
 import type { Context } from "@earendil-works/chord";
 
-const ns = harnessId("cuts"),
-  command = {
-    kind: "inline",
-    input: { content: "hello", whenBusy: "followUp" },
-  };
+const ns = harnessId("cuts");
+const command = {
+  kind: "inline",
+  input: { content: "hello", whenBusy: "followUp" },
+};
 
 function fixture() {
-  let time = 10000,
-    budget = 45000;
-  const backend = createMemoryBackend({ now: () => time }),
-    objects = memoryObjectsFixture(),
-    work = controlledWork(),
-    dispatch = manualDispatch();
+  let time = 10000;
+  let budget = 45000;
+  const backend = createMemoryBackend({ now: () => time });
+  const objects = memoryObjectsFixture();
+  const work = controlledWork();
+  const dispatch = manualDispatch();
   const events: string[] = [];
   const deps = runtimeDependencies({
     backend: backend,
@@ -58,21 +58,23 @@ function fixture() {
   };
 }
 
-for (const cut of ["open", "resolve", "hasWork"] as const)
+for (const cut of ["open", "resolve", "hasWork"] as const) {
   it(`real worker cut at ${cut} retains received input and does not release`, async () => {
-    const f = fixture(),
-      a = await f.backend.connectAuthority();
-    const original = Error(`cut-${cut}`);
+    const f = fixture();
+    const a = await f.backend.connectAuthority();
+    const original = new Error(`cut-${cut}`);
 
     await f.api({ ns, request: "r", command });
-    if (cut === "open")
+    if (cut === "open") {
       f.deps.open = async () => {
         throw original;
       };
-    if (cut === "resolve")
+    }
+    if (cut === "resolve") {
       f.deps.resolve = async () => {
         throw original;
       };
+    }
 
     if (cut === "hasWork") {
       const connect = f.deps.connectAuthority;
@@ -94,10 +96,11 @@ for (const cut of ["open", "resolve", "hasWork"] as const)
       await a.close();
     }
   });
+}
 
 it("a post-resolve deadline leaves input received, joins Harness closure, then releases cleanly", async () => {
-  const f = fixture(),
-    a = await f.backend.connectAuthority();
+  const f = fixture();
+  const a = await f.backend.connectAuthority();
 
   await f.api({ ns, request: "r", command });
 
@@ -122,27 +125,28 @@ it("a post-resolve deadline leaves input received, joins Harness closure, then r
 });
 
 it("a Storage close failure is an actual failed Session, never a clean release", async () => {
-  const f = fixture(),
-    a = await f.backend.connectAuthority();
+  const f = fixture();
+  const a = await f.backend.connectAuthority();
 
   await f.api({ ns, request: "r", command });
 
-  const original = Error("close failure");
+  const original = new Error("close failure");
   const backend: Backend = {
     ...f.backend,
     openStorage: async (lease) => {
-      const s = await f.backend.openStorage(lease),
-        close = s.close.bind(s);
+      const s = await f.backend.openStorage(lease);
+      const close = s.close.bind(s);
 
       return new Proxy(s, {
         get(target, key) {
           if (key === "then") return undefined;
-          if (key === "close")
+          if (key === "close") {
             return async (c: Context) => {
               await close(c);
 
               throw original;
             };
+          }
 
           const v = Reflect.get(target, key);
 
@@ -151,16 +155,16 @@ it("a Storage close failure is an actual failed Session, never a clean release",
       });
     },
   };
-  const work = controlledWork(),
-    deps = runtimeDependencies({
-      backend: backend,
-      harnessOptions: work,
-      objects: f.objects.objects,
-      event: () => {},
-      rootAgent: {
-        model: { provider: "faux", modelId: "faux-1" },
-      },
-    });
+  const work = controlledWork();
+  const deps = runtimeDependencies({
+    backend: backend,
+    harnessOptions: work,
+    objects: f.objects.objects,
+    event: () => {},
+    rootAgent: {
+      model: { provider: "faux", modelId: "faux-1" },
+    },
+  });
 
   try {
     await expect(worker(ns, () => 45000, deps)).rejects.toBe(original);
@@ -171,8 +175,8 @@ it("a Storage close failure is an actual failed Session, never a clean release",
 });
 
 it("arrival after final work poll but before release stays discoverable; no worker dispatch or reclaim", async () => {
-  const f = fixture(),
-    a = await f.backend.connectAuthority();
+  const f = fixture();
+  const a = await f.backend.connectAuthority();
 
   await f.api({ ns, request: "first", command });
 
@@ -214,10 +218,10 @@ it("arrival after final work poll but before release stays discoverable; no work
   }
 });
 
-for (const applied of [false, true])
+for (const applied of [false, true]) {
   it(`release acknowledgement loss applied=${applied} is not retried or followed by reclaim`, async () => {
-    const f = fixture(),
-      a = await f.backend.connectAuthority();
+    const f = fixture();
+    const a = await f.backend.connectAuthority();
 
     await f.api({ ns, request: "r", command });
 
@@ -233,7 +237,7 @@ for (const applied of [false, true])
           attempts++;
           if (applied) await control.release(lease);
 
-          throw Error("release unknown");
+          throw new Error("release unknown");
         },
       };
     };
@@ -248,3 +252,4 @@ for (const applied of [false, true])
       await a.close();
     }
   });
+}

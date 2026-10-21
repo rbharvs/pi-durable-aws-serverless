@@ -24,7 +24,7 @@ import type { ObjectKey } from "../../src/payload.ts";
 
 export type LeaseExpiry = Pick<Lease, "ns" | "until">;
 
-export type ContractFixture = {
+export interface ContractFixture {
   backend: Backend;
   ns: HarnessId;
   authority: Authority;
@@ -39,7 +39,7 @@ export type ContractFixture = {
   /** Set exact test-namespace expiries, expire all of them, and return their actual stored times. */
   setExpiredLeases(expiries: readonly LeaseExpiry[]): Promise<LeaseExpiry[]>;
   finish(): Promise<void>;
-};
+}
 
 export type Factory = () => Promise<ContractFixture>;
 
@@ -83,35 +83,40 @@ export function contracts(name: string, make: Factory) {
       "object-limit",
       "object-inline-coherence",
       "invalid-kind",
-    ] as const)
+    ] as const) {
       it(`raw receive rejects ${invalid} without receipt namespace creation or existing-state mutation`, async () => {
-        const f = await make(),
-          json = '{"content":"hello","whenBusy":"followUp"}',
-          large = canonical({
-            content: "x".repeat(MAX_INLINE_INPUT_BYTES),
-            whenBusy: "followUp",
-          });
-        const foreign = `${f.ns}_invalid` as HarnessId,
-          key =
-            `p/${invalid === "foreign-published-key" ? "other" : f.ns}/00000000-0000-4000-8000-000000000000` as ObjectKey;
+        const f = await make();
+        const json = '{"content":"hello","whenBusy":"followUp"}';
+        const large = canonical({
+          content: "x".repeat(MAX_INLINE_INPUT_BYTES),
+          whenBusy: "followUp",
+        });
+        const foreign = `${f.ns}_invalid` as HarnessId;
+        const key =
+          `p/${invalid === "foreign-published-key" ? "other" : f.ns}/00000000-0000-4000-8000-000000000000` as ObjectKey;
         let accepted: AcceptedInput = {
           hash: input.hash,
           payload: { kind: "inline", json },
         };
 
-        if (invalid === "canonical-hash")
+        if (invalid === "canonical-hash") {
           accepted = { ...accepted, hash: sha("different canonical input") };
-        if (invalid === "noncanonical-json")
+        }
+        if (invalid === "noncanonical-json") {
           accepted = {
             ...accepted,
             payload: { kind: "inline", json: ` ${json} ` },
           };
-        if (invalid === "inline-limit")
+        }
+        if (invalid === "inline-limit") {
           accepted = {
             hash: large.sha256,
             payload: { kind: "inline", json: large.json },
           };
-        if (["foreign-published-key", "object-limit", "object-inline-coherence"].includes(invalid))
+        }
+        if (
+          ["foreign-published-key", "object-limit", "object-inline-coherence"].includes(invalid)
+        ) {
           accepted = {
             hash: input.hash,
             payload: {
@@ -126,15 +131,17 @@ export function contracts(name: string, make: Factory) {
                     : MAX_INLINE_INPUT_BYTES + 1,
             },
           };
-        if (invalid === "invalid-kind")
+        }
+        if (invalid === "invalid-kind") {
           accepted = {
             hash: input.hash,
             payload: { kind: "unexpected", json },
           } as unknown as AcceptedInput;
+        }
 
         try {
-          const eligible = await f.authority.eligible(),
-            seed = await f.authority.get(f.ns, requestId("seed"));
+          const eligible = await f.authority.eligible();
+          const seed = await f.authority.get(f.ns, requestId("seed"));
 
           for (const ns of [f.ns, foreign]) {
             await expect(f.authority.receive(ns, requestId("bad"), accepted)).rejects.toThrow();
@@ -150,9 +157,10 @@ export function contracts(name: string, make: Factory) {
           await f.finish();
         }
       });
+    }
     it("received on an unknown namespace is an empty read and does not create authority state", async () => {
-      const f = await make(),
-        ns = `${f.ns}_unknown` as HarnessId;
+      const f = await make();
+      const ns = `${f.ns}_unknown` as HarnessId;
 
       try {
         await expect(f.authority.received(ns)).resolves.toEqual([]);
@@ -164,9 +172,10 @@ export function contracts(name: string, make: Factory) {
       }
     });
     it("same-lease stale-sequence COMMIT preserves records revisions head and allocation", async () => {
-      const f = await make(),
-        doc = idFromNumber<DocumentId>(20);
-      let stale: Storage | undefined, winner: Storage | undefined;
+      const f = await make();
+      const doc = idFromNumber<DocumentId>(20);
+      let stale: Storage | undefined;
+      let winner: Storage | undefined;
 
       try {
         const init = await f.backend.openStorage(f.lease);
@@ -261,14 +270,14 @@ export function contracts(name: string, make: Factory) {
       }
     });
     it("rejected task batch preserves authoritative work discovery and counters", async () => {
-      const f = await make(),
-        s = await f.backend.openStorage(f.lease);
+      const f = await make();
+      const s = await f.backend.openStorage(f.lease);
 
       try {
         await f.expire();
 
-        const seq = await s.commit([], context),
-          minted = await s.mintId();
+        const seq = await s.commit([], context);
+        const minted = await s.mintId();
 
         expect(await f.authority.hasWork(f.ns)).toBe(false);
         expect(await f.authority.eligible()).not.toContain(f.ns);
@@ -338,7 +347,7 @@ export function contracts(name: string, make: Factory) {
         await f.finish();
       }
     });
-    for (const setupGapMs of [0, 100])
+    for (const setupGapMs of [0, 100]) {
       it(`eligible limit five orders actual lease expiry before namespace and creation order${setupGapMs ? " with 100ms setup gaps" : ""}`, async () => {
         const f = await make();
 
@@ -377,15 +386,16 @@ export function contracts(name: string, make: Factory) {
           await f.finish();
         }
       });
+    }
     it("authority detaches accepted input and admission identity before awaiting", async () => {
       const f = await make();
 
       try {
-        const json = '{"content":"hello","whenBusy":"followUp"}',
-          mutable = {
-            hash: input.hash,
-            payload: { kind: "inline" as const, json },
-          };
+        const json = '{"content":"hello","whenBusy":"followUp"}';
+        const mutable = {
+          hash: input.hash,
+          payload: { kind: "inline" as const, json },
+        };
         const pending = f.authority.receive(f.ns, requestId("a"), mutable);
 
         mutable.payload.json = '{"content":"changed","whenBusy":"followUp"}';
@@ -401,8 +411,8 @@ export function contracts(name: string, make: Factory) {
         await f.authority.receive(f.ns, requestId("b"), input);
 
         await publishSubmission(f, 30);
-        const identity = { ...receipt },
-          mark = f.authority.markAdmitted(identity, idFromNumber(30));
+        const identity = { ...receipt };
+        const mark = f.authority.markAdmitted(identity, idFromNumber(30));
 
         identity.request = requestId("b");
         await mark;
@@ -418,8 +428,8 @@ export function contracts(name: string, make: Factory) {
       }
     });
     it("MAX_SAFE can be allocated once, repeated exhaustion keeps raw handle usable", async () => {
-      const f = await make(),
-        s = await f.backend.openStorage(f.lease);
+      const f = await make();
+      const s = await f.backend.openStorage(f.lease);
 
       try {
         await s.commit(
@@ -434,10 +444,11 @@ export function contracts(name: string, make: Factory) {
           context,
         );
         expect(await s.mintId()).toBe(Number.MAX_SAFE_INTEGER);
-        for (let i = 0; i < 2; i++)
+        for (let i = 0; i < 2; i++) {
           await expect(s.mintId()).rejects.toMatchObject({
             message: "ID space is exhausted",
           });
+        }
         expect(
           await s.conversation(idFromNumber<ConversationId>(Number.MAX_SAFE_INTEGER - 1), context),
         ).toBeDefined();
@@ -447,8 +458,8 @@ export function contracts(name: string, make: Factory) {
       }
     });
     it("background tasks and queued submissions each keep work discoverable", async () => {
-      const f = await make(),
-        s = await f.backend.openStorage(f.lease);
+      const f = await make();
+      const s = await f.backend.openStorage(f.lease);
       const task = {
         id: idFromNumber<TaskId<null>>(20),
         conversationId: idFromNumber<ConversationId>(1),
@@ -555,11 +566,12 @@ export function contracts(name: string, make: Factory) {
       try {
         const receipts: InboxItem[] = [];
 
-        for (let i = 11; i >= 0; i--)
+        for (let i = 11; i >= 0; i--) {
           receipts.push(
             (await f.authority.receive(f.ns, requestId(`r${String(i).padStart(2, "0")}`), input))
               .item,
           );
+        }
         await f.orderingTies();
 
         const tied = await Promise.all(receipts.map((r) => f.authority.get(f.ns, r.request)));
@@ -580,8 +592,9 @@ export function contracts(name: string, make: Factory) {
       const f = await make();
 
       try {
-        for (let i = 8; i >= 0; i--)
+        for (let i = 8; i >= 0; i--) {
           await f.authority.receive(`${f.ns}_${i}` as HarnessId, requestId("one"), input);
+        }
         await f.orderingTies();
 
         const eligible = await f.authority.eligible();
@@ -641,9 +654,9 @@ export function contracts(name: string, make: Factory) {
     });
     it("real Pi callback/init failure consumes durable IDs with no failed business records", async () => {
       const f = await make();
-      let h: Awaited<ReturnType<typeof Harness.open>> | undefined,
-        s: Storage | undefined,
-        seen = 0;
+      let h: Awaited<ReturnType<typeof Harness.open>> | undefined;
+      let s: Storage | undefined;
+      let seen = 0;
       const options = () => ({
         models: createModels(),
         registry: createRegistry(),
@@ -659,7 +672,7 @@ export function contracts(name: string, make: Factory) {
           root.commit(async (tx) => {
             seen = (await tx.createConversation({ ownership: { kind: "ownerless" } })).id;
 
-            throw Error("callback cut");
+            throw new Error("callback cut");
           }, context),
         ).rejects.toThrow("callback cut");
         await h.close(context);
@@ -673,7 +686,7 @@ export function contracts(name: string, make: Factory) {
               init: (_tx, id) => {
                 seen = id;
 
-                throw Error("init cut");
+                throw new Error("init cut");
               },
             },
             context,
@@ -724,8 +737,8 @@ export function contracts(name: string, make: Factory) {
     });
     it("stale sequence/owner open, mint and commit reject with no business effect", async () => {
       const f = await make();
-      const old = await f.backend.openStorage(f.lease),
-        other = await f.backend.openStorage(f.lease);
+      const old = await f.backend.openStorage(f.lease);
+      const other = await f.backend.openStorage(f.lease);
       let current: Storage | undefined;
 
       try {

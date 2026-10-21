@@ -44,7 +44,7 @@ it("a real SQL error after document owner publication rolls back repeated tasks,
   }
 });
 
-for (const size of [17, 33])
+for (const size of [17, 33]) {
   it(`rejects a ${size} MiB document ${size === 17 ? "object" : "logical batch"} before any upload or durable write`, async () => {
     const f = await historyFixture("document_byte_bound", { objects: memoryObjects });
     try {
@@ -72,6 +72,7 @@ for (const size of [17, 33])
       await f.finish();
     }
   });
+}
 
 it("revisions require scoped identity and payload metadata and cannot overwrite an earlier sequence", async () => {
   const f = await historyFixture("revision_schema");
@@ -85,10 +86,11 @@ it("revisions require scoped identity and payload metadata and cannot overwrite 
       "version",
       "payload_kind",
       "payload_ref",
-    ])
+    ]) {
       await expect(
         f.control.query(`UPDATE revisions SET ${column}=NULL WHERE ns=$1`, [f.ns]),
       ).rejects.toMatchObject({ code: "23502" });
+    }
     await expect(
       f.control.query("INSERT INTO revisions SELECT * FROM revisions WHERE ns=$1", [f.ns]),
     ).rejects.toMatchObject({ code: "23505" });

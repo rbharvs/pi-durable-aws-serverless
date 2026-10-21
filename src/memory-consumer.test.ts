@@ -38,40 +38,40 @@ class CountingBackend implements Backend {
 
 const inlineOnly = (_ns: HarnessId): CommandObjects & ReturnType<RuntimeOptions["objects"]> => ({
   getStaged: async () => {
-    throw Error("staging unsupported");
+    throw new Error("staging unsupported");
   },
   put: async () => {
-    throw Error("large input unsupported");
+    throw new Error("large input unsupported");
   },
   get: async () => {
-    throw Error("no objects");
+    throw new Error("no objects");
   },
   close: () => {},
 });
 
 it("public named-options consumer completes admission reconcile and a real Pi memory worker", async () => {
   let now = 1000000;
-  const backend = createMemoryBackend({ now: () => now }),
-    faux = fauxProvider(),
-    models = createModels();
+  const backend = createMemoryBackend({ now: () => now });
+  const faux = fauxProvider();
+  const models = createModels();
 
   faux.setResponses([fauxAssistantMessage("done")]);
   models.setProvider(faux.provider);
 
-  const wakes: HarnessId[] = [],
-    dispatch = {
-      wake: async (ns: HarnessId) => {
-        wakes.push(ns);
-      },
+  const wakes: HarnessId[] = [];
+  const dispatch = {
+    wake: async (ns: HarnessId) => {
+      wakes.push(ns);
     },
-    event = () => {};
+  };
+  const event = () => {};
   const api = apiHandler({
-      connectAuthority: backend.connectAuthority,
-      objects: inlineOnly,
-      dispatch,
-      event,
-    }),
-    ns = harnessId("consumer");
+    connectAuthority: backend.connectAuthority,
+    objects: inlineOnly,
+    dispatch,
+    event,
+  });
+  const ns = harnessId("consumer");
 
   expect(
     await api({
@@ -114,20 +114,20 @@ it("public named-options consumer completes admission reconcile and a real Pi me
 });
 
 it("public runtime preserves this for a class-based Backend decorator through actual worker completion", async () => {
-  const backend = new CountingBackend(createMemoryBackend({ now: () => 1000000 })),
-    faux = fauxProvider(),
-    models = createModels();
+  const backend = new CountingBackend(createMemoryBackend({ now: () => 1000000 }));
+  const faux = fauxProvider();
+  const models = createModels();
 
   faux.setResponses([fauxAssistantMessage("done")]);
   models.setProvider(faux.provider);
 
-  const ns = harnessId("bound-decorator"),
-    api = apiHandler({
-      connectAuthority: () => backend.connectAuthority(),
-      objects: inlineOnly,
-      dispatch: { wake: async () => {} },
-      event: () => {},
-    });
+  const ns = harnessId("bound-decorator");
+  const api = apiHandler({
+    connectAuthority: () => backend.connectAuthority(),
+    objects: inlineOnly,
+    dispatch: { wake: async () => {} },
+    event: () => {},
+  });
 
   expect(
     await api({

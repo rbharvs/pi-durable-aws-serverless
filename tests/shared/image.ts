@@ -4,24 +4,26 @@ import { deflateSync } from "node:zlib";
 
 export const PNG_BYTES = 4.5 * 1024 * 1024;
 
-const width = 1024,
-  height = 1500;
+const width = 1024;
+const height = 1500;
 
 function crc32(body: Buffer): number {
   let crc = 0xffffffff;
 
   for (const byte of body) {
     crc ^= byte;
-    for (let i = 0; i < 8; i++) crc = (crc >>> 1) ^ (crc & 1 ? 0xedb88320 : 0);
+    for (let i = 0; i < 8; i++) {
+      crc = (crc >>> 1) ^ (crc & 1 ? 0xedb88320 : 0);
+    }
   }
 
   return (crc ^ 0xffffffff) >>> 0;
 }
 
 function chunk(kind: string, body: Buffer): Buffer {
-  const payload = Buffer.concat([Buffer.from(kind), body]),
-    size = Buffer.alloc(4),
-    crc = Buffer.alloc(4);
+  const payload = Buffer.concat([Buffer.from(kind), body]);
+  const size = Buffer.alloc(4);
+  const crc = Buffer.alloc(4);
 
   size.writeUInt32BE(body.length);
   crc.writeUInt32BE(crc32(payload));
@@ -35,8 +37,9 @@ const pixels = createHash("shake256", { outputLength: width * height * 3 })
 
 const scan = Buffer.alloc((width * 3 + 1) * height);
 
-for (let y = 0; y < height; y++)
+for (let y = 0; y < height; y++) {
   pixels.copy(scan, y * (width * 3 + 1) + 1, y * width * 3, (y + 1) * width * 3);
+}
 
 const ihdr = Buffer.alloc(13);
 

@@ -24,10 +24,10 @@ const fence = (sql: string) => sql.startsWith("UPDATE harness SET next_seq");
 const allocation = (sql: string) => sql.startsWith("UPDATE harness SET next_id=");
 const recordInsert = (sql: string) => sql.startsWith("INSERT INTO records");
 
-for (const operation of ["mint", "commit"] as const)
-  for (const applied of [false, true])
+for (const operation of ["mint", "commit"] as const) {
+  for (const applied of [false, true]) {
     it(`unknown ${operation} ACK applied=${applied} poisons raw reads and queued writes, never retries or releases`, async () => {
-      const cause = Error(`${operation} acknowledgement lost`);
+      const cause = new Error(`${operation} acknowledgement lost`);
       const reached = deferred();
       const proceed = deferred();
       let writing = false;
@@ -98,10 +98,12 @@ for (const operation of ["mint", "commit"] as const)
         await f.finish();
       }
     });
+  }
+}
 
 it("a reader queued after an uncommitted INSERT sees rollback, and a confirmed rollback keeps the original cause", async () => {
   const inserted = queryGate("after", recordInsert);
-  const original = Error("statement response failed after INSERT");
+  const original = new Error("statement response failed after INSERT");
   let armed = false;
   const f = await historyFixture("rollback_reader", {
     hook: async (...args) => {
@@ -142,10 +144,10 @@ it("a reader queued after an uncommitted INSERT sees rollback, and a confirmed r
   }
 });
 
-for (const applied of [false, true])
+for (const applied of [false, true]) {
   it(`unknown ROLLBACK ACK applied=${applied} retains both errors and fails queued operations`, async () => {
-    const original = Error("original statement failure");
-    const rollback = Error("rollback acknowledgement lost");
+    const original = new Error("original statement failure");
+    const rollback = new Error("rollback acknowledgement lost");
     const reached = deferred();
     const proceed = deferred();
     let armed = false;
@@ -191,6 +193,7 @@ for (const applied of [false, true])
       await f.finish();
     }
   });
+}
 
 it("close is immediate for new/queued work, drains the active operation, ends once, and does not release ownership", async () => {
   const gate = queryGate("after", recordInsert);
@@ -234,7 +237,7 @@ it("close is immediate for new/queued work, drains the active operation, ends on
   }
 });
 
-for (const operation of ["mint", "commit"] as const)
+for (const operation of ["mint", "commit"] as const) {
   it(`same-lease stale sequence rejects ${operation} without changing history or counters`, async () => {
     const f = await historyFixture("stale_sequence");
 
@@ -257,6 +260,7 @@ for (const operation of ["mint", "commit"] as const)
       await f.finish();
     }
   });
+}
 
 it("exactly one competing writer publishes, including its payload, head and high-water update", async () => {
   const f = await historyFixture("competing_writers");
@@ -296,7 +300,7 @@ it("exactly one competing writer publishes, including its payload, head and high
   }
 });
 
-for (const cut of ["before-write", "snapshot-in-flight"] as const)
+for (const cut of ["before-write", "snapshot-in-flight"] as const) {
   it(`takeover ${cut} fences old mint/commit/open and stale release cannot clear the new owner`, async () => {
     let armed = false;
     let f: HistoryFixture;
@@ -307,11 +311,13 @@ for (const cut of ["before-write", "snapshot-in-flight"] as const)
           !armed ||
           phase !== "before" ||
           (cut === "before-write" ? sql !== BEGIN_WRITE : !fence(sql))
-        )
+        ) {
           return;
+        }
         armed = false;
-        if (cut === "snapshot-in-flight")
+        if (cut === "snapshot-in-flight") {
           await f.db.query("SELECT epoch FROM harness WHERE ns=$1", [f.ns]);
+        }
         await f.control.query("UPDATE harness SET lease_until=0 WHERE ns=$1", [f.ns]);
         takeover = await f.authority.claim(f.ns, 180000);
       },
@@ -325,7 +331,7 @@ for (const cut of ["before-write", "snapshot-in-flight"] as const)
       armed = true;
       await expect(f.storage.commit([entry(1000)], context)).rejects.toThrow("Stale");
       expect(takeover?.kind).toBe("claimed");
-      if (takeover?.kind !== "claimed") throw Error("Takeover did not claim");
+      if (takeover?.kind !== "claimed") throw new Error("Takeover did not claim");
       expect(takeover.lease.epoch).toBe(f.lease.epoch + 1);
       const before = await f.snapshot();
 
@@ -342,6 +348,7 @@ for (const cut of ["before-write", "snapshot-in-flight"] as const)
       await f.finish();
     }
   });
+}
 
 it("expiration alone does not fence an unchanged owner: open, mint and commit still work until a successful takeover", async () => {
   const f = await historyFixture("expiration_not_fence");
@@ -373,8 +380,9 @@ it("held claims cannot renew or replace a live owner; release is fenced and the 
     const rivals: InspectableAuthority[] = [];
 
     try {
-      for (let i = 0; i < 5; i++)
+      for (let i = 0; i < 5; i++) {
         rivals.push(new InspectableAuthority(await Database.connect(provider), provider));
+      }
       const claims = await Promise.all(rivals.map((rival) => rival.claim(f.ns, 25000)));
 
       expect(claims).toEqual(Array.from({ length: 5 }, () => ({ kind: "held" })));
@@ -399,7 +407,7 @@ it("held claims cannot renew or replace a live owner; release is fenced and the 
     const upper = Number((await f.control.query(`SELECT ${DB_NOW_MS} AS at`))[0]!.at);
 
     expect(next.kind).toBe("claimed");
-    if (next.kind !== "claimed") throw Error("Released namespace was not claimable");
+    if (next.kind !== "claimed") throw new Error("Released namespace was not claimable");
     expect(next.lease.owner).not.toBe(f.lease.owner);
     expect(next.lease.epoch).toBe(f.lease.epoch + 1);
     // The documented 2-second close margin is in addition to the 25-second budget.
@@ -561,7 +569,7 @@ it("fixture teardown closes open and cold handles before namespace deletion and 
 
 it("fixture teardown joins close failures and both SQL leak checks, and deletes its exact namespace without release", async () => {
   const f = await historyFixture("fixture_cleanup_failures", { objects: memoryObjects });
-  const failures = [Error("first close failed"), Error("second close failed")];
+  const failures = [new Error("first close failed"), new Error("second close failed")];
   let ownerAtCleanup: unknown;
 
   try {
@@ -588,8 +596,9 @@ it("fixture teardown joins close failures and both SQL leak checks, and deletes 
     const query = f.control.query.bind(f.control);
 
     f.control.query = async (sql, params) => {
-      if (sql === "DELETE FROM inbox WHERE ns=$1")
+      if (sql === "DELETE FROM inbox WHERE ns=$1") {
         ownerAtCleanup = (await query("SELECT owner FROM harness WHERE ns=$1", [f.ns]))[0]!.owner;
+      }
       return query(sql, params);
     };
     const error = await f.finish().catch((error: unknown) => error);
@@ -612,8 +621,9 @@ it("fixture teardown joins close failures and both SQL leak checks, and deletes 
     const observer = await Database.connect(provider);
 
     try {
-      for (const table of OWNED_TABLES)
+      for (const table of OWNED_TABLES) {
         expect(await observer.query(`SELECT * FROM ${table} WHERE ns=$1`, [f.ns])).toEqual([]);
+      }
       // Independent of OWNED_TABLES: an omitted revision table must still fail cleanup.
       expect(await observer.query("SELECT * FROM revisions WHERE ns=$1", [f.ns])).toEqual([]);
     } finally {

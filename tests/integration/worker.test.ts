@@ -39,12 +39,12 @@ it("submit-before-mark cut retains ownership; the next owner recovers one logica
   const connect = f.deps.connectAuthority;
   let first = true;
   f.deps.connectAuthority = async () => {
-    const c = await connect(),
-      mark = c.markAdmitted.bind(c);
+    const c = await connect();
+    const mark = c.markAdmitted.bind(c);
     c.markAdmitted = async (item, id) => {
       if (first) {
         first = false;
-        throw Error("mapping cut");
+        throw new Error("mapping cut");
       }
       await mark(item, id);
     };
@@ -77,8 +77,8 @@ it("five held competitors cannot disturb a real gated model, its owner, or publi
   const mapped = deferred();
   const connect = f.deps.connectAuthority;
   f.deps.connectAuthority = async () => {
-    const c = await connect(),
-      mark = c.markAdmitted.bind(c);
+    const c = await connect();
+    const mark = c.markAdmitted.bind(c);
     c.markAdmitted = async (item, id) => {
       await mark(item, id);
       mapped.resolve();
@@ -112,12 +112,12 @@ it("five held competitors cannot disturb a real gated model, its owner, or publi
 
 it("the owner admits steer and follow-up arrivals while its model is running", async () => {
   const f = await workerFixture("worker_arrivals", true);
-  const steer = deferred(),
-    proceed = deferred();
+  const steer = deferred();
+  const proceed = deferred();
   const connect = f.deps.connectAuthority;
   f.deps.connectAuthority = async () => {
-    const c = await connect(),
-      mark = c.markAdmitted.bind(c);
+    const c = await connect();
+    const mark = c.markAdmitted.bind(c);
     c.markAdmitted = async (item, id) => {
       await mark(item, id);
       if (item.request === "steer") {

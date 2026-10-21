@@ -276,8 +276,8 @@ for (const command of [
   "document.copy",
   "document.change",
   "document.retire",
-] as const)
-  for (const owner of ["task", "entry", "conversation", "submission"] as const)
+] as const) {
+  for (const owner of ["task", "entry", "conversation", "submission"] as const) {
     it(`rejects ${command} reusing an existing ${owner} ID without mutation`, async () => {
       const f = await historyFixture("document_global_id");
       try {
@@ -317,16 +317,19 @@ for (const command of [
         await f.finish();
       }
     });
+  }
+}
 
-for (const state of ["current", "retired"] as const)
-  for (const command of ["document.create", "document.copy"] as const)
+for (const state of ["current", "retired"] as const) {
+  for (const command of ["document.create", "document.copy"] as const) {
     it(`rejects ${command} reusing a ${state} document ID at a free address without mutation`, async () => {
       const f = await historyFixture("document_id_reuse");
       try {
         const existing = documentCreate(30, "other");
         const first = await f.storage.commit([documentCreate(20), existing], context);
-        if (state === "retired")
+        if (state === "retired") {
           await f.storage.commit([{ type: "document.retire", id: existing.record.id }], context);
+        }
         const original = await f.storage.document(existing.record.id, first, context);
         expect(original).toMatchObject({
           record: { ...existing.record, createdAt: first },
@@ -359,6 +362,8 @@ for (const state of ["current", "retired"] as const)
         await f.finish();
       }
     });
+  }
+}
 
 for (const [column, value] of [
   ["id", "21"],
@@ -368,7 +373,7 @@ for (const [column, value] of [
   ["address_hash", "wrong"],
   ["created_at", "0"],
   ["retired_at", "4"],
-] as const)
+] as const) {
   it(`rejects document index corruption in ${column} on a cold point read`, async () => {
     const f = await historyFixture("document_index");
     try {
@@ -382,6 +387,7 @@ for (const [column, value] of [
       await f.finish();
     }
   });
+}
 
 for (const [name, patch] of [
   ["id", { id: "20" }],
@@ -393,7 +399,7 @@ for (const [name, patch] of [
   ["key", { key: 2 }],
   ["history", { history: "wrong" }],
   ["fork", { fork: "wrong" }],
-] as const)
+] as const) {
   it(`rejects corrupt document body ${name} before returning metadata or materialized values`, async () => {
     const f = await historyFixture("document_body");
     try {
@@ -422,6 +428,7 @@ for (const [name, patch] of [
       await f.finish();
     }
   });
+}
 
 it("counts both revision and lifecycle payload owners before uploading any oversized batch", async () => {
   const f = await historyFixture("revision_budget", { objects: memoryObjects });

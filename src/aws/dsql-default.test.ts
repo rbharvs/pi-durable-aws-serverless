@@ -15,7 +15,7 @@ afterEach(() => {
 
 it("the default Lambda root signs with the real SDK environment chain before pg setup", async () => {
   const forbidden = vi.fn((): never => {
-    throw Error("Unexpected credential-file or network I/O");
+    throw new Error("Unexpected credential-file or network I/O");
   });
   vi.spyOn(fs, "readFileSync").mockImplementation(forbidden);
   vi.spyOn(fs, "readFile").mockImplementation(forbidden);

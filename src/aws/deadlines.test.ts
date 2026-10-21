@@ -20,7 +20,7 @@ it("stalled confirmation HEAD shares the PUT deadline and preserves the primary 
   const finishPut = Promise.withResolvers<void>();
   const headStarted = Promise.withResolvers<void>();
   const finishHead = Promise.withResolvers<never>();
-  const calls: { method: string; path: string; signal?: AbortSignal }[] = [];
+  const calls: Array<{ method: string; path: string; signal?: AbortSignal }> = [];
   let primary: unknown;
   const client = new S3Client({
     ...aws,
@@ -45,7 +45,7 @@ it("stalled confirmation HEAD shares the PUT deadline and preserves the primary 
             },
           };
         }
-        const abort = () => finishHead.reject(Error("HEAD aborted"));
+        const abort = () => finishHead.reject(new Error("HEAD aborted"));
         signal?.addEventListener("abort", abort, { once: true });
         if (signal?.aborted) abort();
         headStarted.resolve();
@@ -101,7 +101,7 @@ it("stalled confirmation HEAD shares the PUT deadline and preserves the primary 
     expect(calls[1].signal?.aborted).toBe(true);
   } finally {
     finishPut.resolve();
-    finishHead.reject(Error("test cleanup"));
+    finishHead.reject(new Error("test cleanup"));
     store.close();
     await outcome;
   }

@@ -43,7 +43,7 @@ function histories(seed: number): Operation[][] {
   );
 }
 
-for (const corruption of ["reused-id", "stored-entry"] as const)
+for (const corruption of ["reused-id", "stored-entry"] as const) {
   it(`independent ledger detects actual public adapter corruption: ${corruption}`, async () => {
     const f = await memoryFixture();
     const backend = {
@@ -53,12 +53,13 @@ for (const corruption of ["reused-id", "stored-entry"] as const)
         return new Proxy(storage, {
           get(target, key) {
             if (key === "then") return undefined;
-            if (key === "mintId" && corruption === "reused-id")
+            if (key === "mintId" && corruption === "reused-id") {
               return async () => {
                 await target.mintId();
                 return 2;
               };
-            if (key === "commit" && corruption === "stored-entry")
+            }
+            if (key === "commit" && corruption === "stored-entry") {
               return (
                 writes: Parameters<Storage["commit"]>[0],
                 context: Parameters<Storage["commit"]>[1],
@@ -71,6 +72,7 @@ for (const corruption of ["reused-id", "stored-entry"] as const)
                   ),
                   context,
                 );
+            }
             const value = Reflect.get(target, key);
             return typeof value === "function" ? value.bind(target) : value;
           },
@@ -87,14 +89,17 @@ for (const corruption of ["reused-id", "stored-entry"] as const)
       await f.finish();
     }
   });
+}
 
 const seeds = process.env.HISTORY_SEED ? [Number(process.env.HISTORY_SEED)] : [20261017, 19790527];
 const replay =
   process.env.HISTORY_INDEX === undefined ? undefined : Number(process.env.HISTORY_INDEX);
-if (seeds.some((s) => !Number.isSafeInteger(s) || s <= 0 || s > 0xffffffff))
-  throw Error("Invalid HISTORY_SEED");
-if (replay !== undefined && (!Number.isInteger(replay) || replay < 0 || replay >= 50))
-  throw Error("Invalid HISTORY_INDEX");
+if (seeds.some((s) => !Number.isSafeInteger(s) || s <= 0 || s > 0xffffffff)) {
+  throw new Error("Invalid HISTORY_SEED");
+}
+if (replay !== undefined && (!Number.isInteger(replay) || replay < 0 || replay >= 50)) {
+  throw new Error("Invalid HISTORY_INDEX");
+}
 
 it("memory mandatory history prefix protects allocation independently of generated tails", async () => {
   const f = await memoryFixture();
@@ -105,13 +110,13 @@ it("memory mandatory history prefix protects allocation independently of generat
   }
 });
 
-for (const seed of seeds)
+for (const seed of seeds) {
   it(`memory generated histories + independent ledger seed=${seed}`, async () => {
     let count = 0;
     for (const [index, tail] of histories(seed).entries()) {
       if (replay !== undefined && index !== replay) continue;
-      const operations = [...prefix, ...tail],
-        f = await memoryFixture();
+      const operations = [...prefix, ...tail];
+      const f = await memoryFixture();
       try {
         await runHistory(f, operations);
         count++;
@@ -123,3 +128,4 @@ for (const seed of seeds)
     }
     expect(count).toBe(replay === undefined ? 50 : 1);
   });
+}

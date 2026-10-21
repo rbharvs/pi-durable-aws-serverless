@@ -24,7 +24,7 @@ function submitApi(
   overrides: Partial<ApiDependencies> = {},
 ) {
   const wakes: string[] = [];
-  const events: Record<string, unknown>[] = [];
+  const events: Array<Record<string, unknown>> = [];
   const reports: unknown[] = [];
   const run = apiHandler({
     connectAuthority: async () => (await traced()).authority,
@@ -51,7 +51,7 @@ function staged(
   return { kind: "s3", ...fixture.stage(ns, raw, name) };
 }
 
-for (const extraByte of [0, 1])
+for (const extraByte of [0, 1]) {
   it(`stores staged canonical input at 256 KiB + ${extraByte} bytes in the correct form and preserves duplicates`, async () => {
     const store = await namespace("staged_inline_boundary");
     const fixture = objectFixture();
@@ -74,8 +74,9 @@ for (const extraByte of [0, 1])
         expect(item?.payload).toEqual({ kind: "inline", json: expected.json });
         expect(fixture.publishedKeys()).toEqual([]);
       } else {
-        if (item?.payload.kind !== "s3")
-          throw Error("Expected published receipt above the inline limit");
+        if (item?.payload.kind !== "s3") {
+          throw new Error("Expected published receipt above the inline limit");
+        }
         expect(item.payload).toMatchObject({ sha256: expected.sha256, bytes: inlineLimit + 1 });
         expect(fixture.publishedKeys()).toEqual([item.payload.key]);
         expect(fixture.inspectPublished(item.payload.key)?.toString()).toBe(expected.json);
@@ -104,17 +105,18 @@ for (const extraByte of [0, 1])
       await store.finish();
     }
   });
+}
 
 for (const [name, raw] of [
   ["deep", "[ [ [ [ ] ] ] ]"],
   ["wide", "[" + Array.from({ length: 2048 }, () => "{}").join(",") + "]"],
-] as const)
+] as const) {
   it(`rejects ${name} staged JSON before authority acquisition`, async () => {
     const store = await namespace("staged_structure");
     const fixture = objectFixture();
     const api = submitApi(fixture, {
       connectAuthority: async () => {
-        throw Error("must reject before acquisition");
+        throw new Error("must reject before acquisition");
       },
     });
 
@@ -130,6 +132,7 @@ for (const [name, raw] of [
       await store.finish();
     }
   });
+}
 
 it("small staged content becomes inline and deduplicates by canonical, not raw, identity", async () => {
   const store = await namespace("staged_small");
@@ -195,7 +198,7 @@ it("publishes large canonical JSON independently of mutable staging and preserve
       sha256: input.sha256,
       bytes: input.bytes,
     });
-    if (item?.payload.kind !== "s3") throw Error("Expected published receipt");
+    if (item?.payload.kind !== "s3") throw new Error("Expected published receipt");
     expect(command.sha256).not.toBe(input.sha256);
     expect(fixture.inspectPublished(item.payload.key)?.toString()).toBe(input.json);
 
@@ -297,7 +300,7 @@ for (const [name, raw] of [
     "UTF-8 BOM",
     Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), Buffer.from(JSON.stringify(small))]),
   ],
-] as const)
+] as const) {
   it(`rejects staged ${name} without a receipt, publication, or wake`, async () => {
     const store = await namespace("staged_invalid");
     const fixture = objectFixture();
@@ -315,8 +318,9 @@ for (const [name, raw] of [
       await store.finish();
     }
   });
+}
 
-for (const mismatch of ["length", "hash"] as const)
+for (const mismatch of ["length", "hash"] as const) {
   it(`rejects staged ${mismatch} mismatch even with valid JSON content`, async () => {
     const store = await namespace("staged_integrity");
     const fixture = objectFixture();
@@ -340,8 +344,9 @@ for (const mismatch of ["length", "hash"] as const)
       await store.finish();
     }
   });
+}
 
-for (const mismatch of ["hash", "length", "namespace", "staging-key", "bounds"] as const)
+for (const mismatch of ["hash", "length", "namespace", "staging-key", "bounds"] as const) {
   it(`does not record a receipt when publication returns mismatched ${mismatch}`, async () => {
     const store = await namespace("publication_invalid");
     const fixture = objectFixture();
@@ -386,6 +391,7 @@ for (const mismatch of ["hash", "length", "namespace", "staging-key", "bounds"] 
       await store.finish();
     }
   });
+}
 
 it("has no receipt while publication is awaiting durable confirmation", async () => {
   const store = await namespace("publication_order");
@@ -428,7 +434,7 @@ it("has no receipt while publication is awaiting durable confirmation", async ()
   expect(await reply).toMatchObject({ ok: true });
 });
 
-for (const applied of [false, true])
+for (const applied of [false, true]) {
   it(`reports upload uncertainty (applied=${applied}) without a receipt or automatic retry`, async () => {
     const store = await namespace("publication_unknown");
     const fixture = objectFixture();
@@ -440,7 +446,7 @@ for (const applied of [false, true])
           ...objects,
           async put(json) {
             if (applied) await objects.put(json);
-            throw Error("private upload acknowledgement lost");
+            throw new Error("private upload acknowledgement lost");
           },
         };
       },
@@ -466,8 +472,9 @@ for (const applied of [false, true])
       await store.finish();
     }
   });
+}
 
-for (const scenario of ["confirmed-abort", "missing-unique-winner"] as const)
+for (const scenario of ["confirmed-abort", "missing-unique-winner"] as const) {
   it(`preserves published identity after ${scenario} without automatically republishing`, async () => {
     const store = await namespace("staged_insert_fault");
     const fixture = objectFixture();
@@ -475,7 +482,7 @@ for (const scenario of ["confirmed-abort", "missing-unique-winner"] as const)
     const cause =
       scenario === "confirmed-abort"
         ? confirmedAbort()
-        : Object.assign(Error("unique violation without a visible winner"), { code: "23505" });
+        : Object.assign(new Error("unique violation without a visible winner"), { code: "23505" });
     const api = submitApi(fixture, {
       connectAuthority: async () =>
         (
@@ -511,8 +518,9 @@ for (const scenario of ["confirmed-abort", "missing-unique-winner"] as const)
       await store.finish();
     }
   });
+}
 
-for (const applied of [false, true])
+for (const applied of [false, true]) {
   it(`preserves receipt uncertainty (applied=${applied}) and retries without replacing a committed publication`, async () => {
     const store = await namespace("staged_receipt_unknown");
     const fixture = objectFixture();
@@ -521,8 +529,10 @@ for (const applied of [false, true])
       connectAuthority: async () =>
         (
           await traced(
-            faultOnce(applied ? "after" : "before", "INSERT INTO inbox", () =>
-              Error("lost receipt ACK"),
+            faultOnce(
+              applied ? "after" : "before",
+              "INSERT INTO inbox",
+              () => new Error("lost receipt ACK"),
             ),
             trace,
           )
@@ -558,8 +568,9 @@ for (const applied of [false, true])
       await store.finish();
     }
   });
+}
 
-for (const same of [true, false])
+for (const same of [true, false]) {
   it(`concurrent large publications keep one immutable receipt (same input=${same}) and retain loser orphans`, async () => {
     const store = await namespace("staged_race");
     const fixture = objectFixture();
@@ -603,7 +614,7 @@ for (const same of [true, false])
       } else expect(replies).toContainEqual(conflict);
       const item = await store.authority.get(store.ns, requestId("race"));
 
-      if (item?.payload.kind !== "s3") throw Error("Expected published receipt");
+      if (item?.payload.kind !== "s3") throw new Error("Expected published receipt");
       expect(await store.inbox()).toHaveLength(1);
       const keys = fixture.publishedKeys();
 
@@ -612,12 +623,15 @@ for (const same of [true, false])
       expect(
         canonical(JSON.parse(fixture.inspectPublished(item.payload.key)!.toString())).sha256,
       ).toBe(item.hash);
-      for (const key of keys) expect(fixture.inspectPublished(key)).toBeDefined();
+      for (const key of keys) {
+        expect(fixture.inspectPublished(key)).toBeDefined();
+      }
       expect(fixture.openHandles()).toBe(0);
     } finally {
       await store.finish();
     }
   });
+}
 
 it("stream transport failure stays unavailable, closes objects, and keeps diagnostics private", async () => {
   const store = await namespace("staged_transport");
@@ -626,7 +640,7 @@ it("stream transport failure stays unavailable, closes objects, and keeps diagno
   const body = Readable.from(
     (async function* () {
       yield Buffer.from("{");
-      throw Error("private stream secret");
+      throw new Error("private stream secret");
     })(),
   );
   const api = submitApi(fixture, {
@@ -635,7 +649,7 @@ it("stream transport failure stays unavailable, closes objects, and keeps diagno
       getStaged: async () => body,
     }),
     report: () => {
-      throw Error("broken private report");
+      throw new Error("broken private report");
     },
   });
 

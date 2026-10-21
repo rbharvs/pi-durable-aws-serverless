@@ -20,10 +20,10 @@ function payloadRef(value: unknown): PayloadRef {
   return ref as PayloadRef;
 }
 
-type PayloadMetadata = {
+interface PayloadMetadata {
   readonly ref: PayloadRef;
   readonly payload: { readonly kind: "inline" } | S3Payload;
-};
+}
 
 /** Ownership and envelope checks need no inline body, including when replacing a record. */
 function storedMetadata(row: Row, ns: HarnessId): PayloadMetadata {
@@ -62,13 +62,13 @@ const DELETE_INLINE = "DELETE FROM inline_payloads WHERE ns=$1 AND payload_ref=$
 
 const DELETE_S3 = "DELETE FROM s3_payloads WHERE ns=$1 AND payload_ref=$2";
 
-type Selected = {
+interface Selected {
   readonly input: PayloadInput;
   readonly ref: PayloadRef;
   readonly size: number;
   previous?: { readonly ref: PayloadRef; readonly kind: StoredPayload["kind"] };
   kind: StoredPayload["kind"];
-};
+}
 
 function deletion(value: Selected): readonly Statement[] {
   return value.previous
@@ -83,21 +83,25 @@ function deletion(value: Selected): readonly Statement[] {
 
 /** JSON bytes count once. Scalar metadata and extra SQL/mutations count separately. */
 function estimate(values: readonly Selected[], metadataBytes: number): number {
-  return values.reduce((total, v) => {
+  return values.reduce((total, selectedPayload) => {
     const scalar =
-      v.kind === "inline"
-        ? [v.input.ns, v.ref]
-        : [v.input.ns, v.ref, ...referenceEstimate(v.input.ns, v.size)];
-    const insert = v.kind === "inline" ? INSERT_INLINE : INSERT_S3;
-    const removed = deletion(v);
+      selectedPayload.kind === "inline"
+        ? [selectedPayload.input.ns, selectedPayload.ref]
+        : [
+            selectedPayload.input.ns,
+            selectedPayload.ref,
+            ...referenceEstimate(selectedPayload.input.ns, selectedPayload.size),
+          ];
+    const insert = selectedPayload.kind === "inline" ? INSERT_INLINE : INSERT_S3;
+    const removed = deletion(selectedPayload);
 
     return (
       total +
-      3 * Buffer.byteLength(JSON.stringify([v.kind, v.ref])) +
+      3 * Buffer.byteLength(JSON.stringify([selectedPayload.kind, selectedPayload.ref])) +
       Buffer.byteLength(insert) +
       3 * Buffer.byteLength(JSON.stringify(scalar)) +
       2048 +
-      (v.kind === "inline" ? v.size : 0) +
+      (selectedPayload.kind === "inline" ? selectedPayload.size : 0) +
       removed.reduce(
         (n, s) =>
           n + Buffer.byteLength(s.sql) + 3 * Buffer.byteLength(JSON.stringify(s.params)) + 2048,
@@ -125,24 +129,26 @@ export type PayloadInput = {
     }
 );
 
-export type Statement = {
+export interface Statement {
   readonly sql: string;
   readonly params: readonly SqlValue[];
-};
+}
 
-export type PreparedPayload = {
+/** Bind values and ordered statements surrounding the owning row's mutation. */
+export interface PreparedPayload {
   readonly params: readonly SqlValue[];
   readonly before: readonly Statement[];
   readonly after: readonly Statement[];
-};
+}
 
-export type PayloadPlan = {
+/** Envelope accounting before I/O; upload is deferred until the complete commit passes its bounds. */
+export interface PayloadPlan {
   /** Includes owner rows, payload insert/deletes, not the storage fence. */
   readonly rowMutations: number;
   readonly estimatedBytes: number;
   /** Called only AFTER the complete row/byte envelope passes. No SQL here. */
   upload(): Promise<readonly PreparedPayload[]>;
-};
+}
 
 export class PayloadCorrupt extends Error {
   constructor(key: string, cause: unknown) {
@@ -152,19 +158,21 @@ export class PayloadCorrupt extends Error {
 
 export const PAYLOAD_COLUMNS = ["payload_kind", "payload_ref"] as const;
 
-// Probe both payload tables regardless of kind, without fetching the previous inline body.
-export const referenceProjection = (table: OwnerTable): string =>
-  `${table}.*,
+/** Probes both payload tables regardless of kind, without fetching the previous inline body. */
+export function referenceProjection(table: OwnerTable): string {
+  return `${table}.*,
        (SELECT ip.payload_ref FROM inline_payloads ip WHERE ip.ns=${table}.ns AND ip.payload_ref=${table}.payload_ref) AS inline_ref,
        (SELECT sp.payload_ref FROM s3_payloads sp WHERE sp.ns=${table}.ns AND sp.payload_ref=${table}.payload_ref) AS s3_ref,
        (SELECT sp.object_key FROM s3_payloads sp WHERE sp.ns=${table}.ns AND sp.payload_ref=${table}.payload_ref) AS object_key,
        (SELECT sp.sha256 FROM s3_payloads sp WHERE sp.ns=${table}.ns AND sp.payload_ref=${table}.payload_ref) AS sha256,
        (SELECT sp.bytes FROM s3_payloads sp WHERE sp.ns=${table}.ns AND sp.payload_ref=${table}.payload_ref) AS bytes`;
+}
 
 /** Reads add the inline body only for owners selected by the query. */
-export const projection = (table: OwnerTable): string =>
-  `${referenceProjection(table)},
+export function projection(table: OwnerTable): string {
+  return `${referenceProjection(table)},
        (SELECT ip.json FROM inline_payloads ip WHERE ip.ns=${table}.ns AND ip.payload_ref=${table}.payload_ref) AS inline_json`;
+}
 
 /** Fixed hybrid payload representation: complete planning precedes every object upload. */
 export class Payloads {
@@ -174,8 +182,8 @@ export class Payloads {
   ) {}
 
   plan(values: readonly PayloadInput[], metadataBytes: number): PayloadPlan {
-    const ns = this.ns,
-      objects = this.objects;
+    const ns = this.ns;
+    const objects = this.objects;
     const earlier = new Map<string, Selected>();
     const selected: Selected[] = values.map((source) => {
       const input = { ...source };
@@ -215,73 +223,76 @@ export class Payloads {
     function linkIntermediateDeletes(): void {
       earlier.clear();
 
-      for (const v of selected) {
-        if (v.input.table !== "records") continue;
+      for (const selectedPayload of selected) {
+        if (selectedPayload.input.table !== "records") continue;
 
-        const owner = `records/${v.input.id}`,
-          prior = earlier.get(owner);
+        const owner = `records/${selectedPayload.input.id}`;
+        const prior = earlier.get(owner);
 
-        if (prior) v.previous = { ref: prior.ref, kind: prior.kind };
-        earlier.set(owner, v);
+        if (prior) selectedPayload.previous = { ref: prior.ref, kind: prior.kind };
+        earlier.set(owner, selectedPayload);
       }
     }
 
-    for (const v of [...selected].sort((a, b) => b.size - a.size)) {
+    for (const selectedPayload of [...selected].sort((a, b) => b.size - a.size)) {
       linkIntermediateDeletes();
       if (estimate(selected, metadataBytes) <= LIMITS.maxTransactionBytes) break;
 
-      if (v.kind === "inline") {
-        v.kind = "s3";
+      if (selectedPayload.kind === "inline") {
+        selectedPayload.kind = "s3";
       }
     }
 
     linkIntermediateDeletes();
 
-    const extraDeletes = selected.filter((v) => v.previous).length;
+    const extraDeletes = selected.filter((selectedPayload) => selectedPayload.previous).length;
 
     return {
       rowMutations: 2 * selected.length + extraDeletes,
       estimatedBytes: estimate(selected, metadataBytes),
 
       async upload() {
-        const uploads = selected.filter((v) => v.kind === "s3");
-        const refs = await uploadValues(uploads, async (v) => {
-          const result = await objects.put(v.input.json);
+        const uploads = selected.filter((selectedPayload) => selectedPayload.kind === "s3");
+        const refs = await uploadValues(uploads, async (selectedPayload) => {
+          const result = await objects.put(selectedPayload.input.json);
           check(result.kind === "s3", "Invalid uploaded payload kind");
           const ref = reference(
             { object_key: result.key, sha256: result.sha256, bytes: result.bytes },
             ns,
           );
           check(
-            ref.bytes === v.size && ref.sha256 === computeSha256(v.input.json),
+            ref.bytes === selectedPayload.size &&
+              ref.sha256 === computeSha256(selectedPayload.input.json),
             "Uploaded payload integrity mismatch",
           );
           return ref;
         });
-        const uploaded = new Map<PayloadRef, S3Payload>(uploads.map((v, i) => [v.ref, refs[i]!]));
+        const uploaded = new Map<PayloadRef, S3Payload>(
+          uploads.map((selectedPayload, i) => [selectedPayload.ref, refs[i]!]),
+        );
 
-        return selected.map((v) => {
+        return selected.map((selectedPayload) => {
           let before: Statement;
 
-          if (v.kind === "inline")
+          if (selectedPayload.kind === "inline") {
             before = {
               sql: INSERT_INLINE,
-              params: [ns, v.ref, v.input.json],
+              params: [ns, selectedPayload.ref, selectedPayload.input.json],
             };
-          else {
-            const ref = uploaded.get(v.ref);
+          } else {
+            const ref = uploaded.get(selectedPayload.ref);
 
             check(ref, "Missing prepared S3 reference");
             before = {
               sql: INSERT_S3,
-              params: [ns, v.ref, ref.key, ref.sha256, ref.bytes],
+              params: [ns, selectedPayload.ref, ref.key, ref.sha256, ref.bytes],
             };
           }
 
           return {
-            params: [v.kind, v.ref],
+            params: [selectedPayload.kind, selectedPayload.ref],
             before: [before],
-            after: deletion(v),
+            after: deletion(selectedPayload),
           };
         });
       },
@@ -289,8 +300,8 @@ export class Payloads {
   }
 
   async decode(row: Row, key: string): Promise<string> {
-    const ns = this.ns,
-      objects = this.objects;
+    const ns = this.ns;
+    const objects = this.objects;
 
     try {
       const { payload } = storedMetadata(row, ns);
@@ -300,8 +311,8 @@ export class Payloads {
         check(Buffer.byteLength(json) <= LIMITS.maxInlineBytes, "Inline payload exceeds bound");
         return json;
       }
-      const expectedBytes = payload.bytes,
-        expectedHash = payload.sha256;
+      const expectedBytes = payload.bytes;
+      const expectedHash = payload.sha256;
       const json = jsonText(await objects.get(payload));
       check(
         Buffer.byteLength(json) === expectedBytes && computeSha256(json) === expectedHash,

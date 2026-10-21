@@ -42,17 +42,17 @@ export const dataEntry = (n: number, data: EntryRecord["data"]) =>
 /** Small history cases must not silently start publishing objects. Object I/O has its own suite. */
 const inlineOnly: PayloadObjects = {
   async put() {
-    throw Error("Unexpected object publication in a small-history test");
+    throw new Error("Unexpected object publication in a small-history test");
   },
   async get() {
-    throw Error("Unexpected object fetch in a small-history test");
+    throw new Error("Unexpected object fetch in a small-history test");
   },
 };
 
 /** Only immutable object bytes are emulated. SQL and storage are always real. */
 function payloadObjects() {
   const bodies = new Map<string, Buffer>();
-  const operations: { operation: "PUT" | "GET"; key: string; json?: string }[] = [];
+  const operations: Array<{ operation: "PUT" | "GET"; key: string; json?: string }> = [];
 
   return {
     bodies,
@@ -97,8 +97,14 @@ function payloadObjects() {
 export type ObjectSelector = (ns: HarnessId, memory: PayloadObjects) => PayloadObjects;
 export const memoryObjects: ObjectSelector = (_ns, memory) => memory;
 
-export type HistoryFixtureOptions = { hook?: QueryHook; objects?: ObjectSelector };
-export type HistoryOpenOptions = { hook?: QueryHook; lease?: Lease };
+export interface HistoryFixtureOptions {
+  hook?: QueryHook;
+  objects?: ObjectSelector;
+}
+export interface HistoryOpenOptions {
+  hook?: QueryHook;
+  lease?: Lease;
+}
 
 type HistoryHandle = { storage: SqlStorage } & Awaited<ReturnType<typeof historyConnection>>;
 
@@ -149,8 +155,9 @@ export async function historyFixture(label: string, options: HistoryFixtureOptio
       handles.map(async ({ storage }) => storage.close(context)),
     );
 
-    for (const result of closed)
+    for (const result of closed) {
       if (result.status === "rejected") cleanupErrors.push(result.reason);
+    }
 
     for (const table of ["inline_payloads", "s3_payloads"]) {
       try {
@@ -199,7 +206,9 @@ export async function historyFixture(label: string, options: HistoryFixtureOptio
       ? options.objects(owned.ns, memory.objects(owned.ns))
       : inlineOnly;
     const open = ({ hook, lease: selectedLease = lease }: HistoryOpenOptions = {}) => {
-      if (finishing) return Promise.reject<HistoryHandle>(Error("History fixture is finishing"));
+      if (finishing) {
+        return Promise.reject<HistoryHandle>(new Error("History fixture is finishing"));
+      }
       const operation = (async () => {
         check(selectedLease.ns === owned.ns, "Foreign history fixture lease");
         const connection = await historyConnection(hook);
@@ -254,10 +263,17 @@ export async function historyFixture(label: string, options: HistoryFixtureOptio
         try {
           const result: Record<string, unknown> = {};
 
-          for (const table of ["harness", "records", "revisions", "inline_payloads", "s3_payloads"])
+          for (const table of [
+            "harness",
+            "records",
+            "revisions",
+            "inline_payloads",
+            "s3_payloads",
+          ]) {
             result[table] = await control.query(`SELECT * FROM ${table} WHERE ns=$1 ORDER BY 1,2`, [
               owned.ns,
             ]);
+          }
           await control.query("COMMIT");
 
           return result;

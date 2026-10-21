@@ -140,11 +140,12 @@ export class SqlAuthority implements Authority {
            WHERE ns=$1 AND lease_until < ${DB_NOW_MS} RETURNING epoch,lease_until`,
         [ns, owner, remainingMs, LEASE_MARGIN_MS],
       );
-      if (rows[0])
+      if (rows[0]) {
         return {
           kind: "claimed",
           lease: issueLease(ns, owner, epoch(rows[0].epoch), integer(rows[0].lease_until)),
         };
+      }
       check(
         (await this.db.query("SELECT ns FROM harness WHERE ns=$1", [ns])).length === 1,
         "Unknown namespace",
