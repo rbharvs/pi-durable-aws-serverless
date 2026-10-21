@@ -16,7 +16,7 @@ export function dsqlSigner(host: string, options: AwsOptions): DsqlSigner {
   return new DsqlSigner({
     hostname: host,
     region: configuredRegion,
-    credentials: options.credentials,
+    ...(options.credentials === undefined ? {} : { credentials: options.credentials }),
     expiresIn: 900,
   });
 }
