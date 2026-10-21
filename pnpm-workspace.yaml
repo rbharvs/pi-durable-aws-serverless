@@ -1,5 +1,6 @@
 pmOnFail: error
 strictDepBuilds: true
 allowBuilds:
+  esbuild@0.28.2: true
   "@google/genai": false
   protobufjs: false

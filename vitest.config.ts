@@ -2,6 +2,7 @@ import { defineConfig } from "vitest/config";
 
 export default defineConfig({
   test: {
+    setupFiles: ["./tests/aws-setup.ts"],
     include: ["src/**/*.test.ts"],
     passWithNoTests: false,
     allowOnly: false,

@@ -7,7 +7,7 @@ import {
 import { namespace, provider } from "./postgres.ts";
 import { createSqlBackend } from "../../src/sql/backend.ts";
 import { objectFixture } from "../shared/objects.ts";
-import { check, requestId, sleep } from "../../src/domain.ts";
+import { check, harnessId, integer, requestId, sleep } from "../../src/domain.ts";
 import { idFromNumber } from "../../src/ids.ts";
 
 async function fixture(): Promise<ContractFixture> {
@@ -30,6 +30,18 @@ async function fixture(): Promise<ContractFixture> {
         ]);
       },
       advanceAuthorityClock: sleep,
+      setExpiredLeases: async (expiries) => {
+        const actual = [];
+        for (const { ns, until } of expiries) {
+          const rows = await f.authority.inspectionDb.query(
+            "UPDATE harness SET lease_until=$2 WHERE ns=$1 RETURNING ns,lease_until",
+            [ns, until],
+          );
+          check(rows.length === 1, "Missing fixture expiry namespace");
+          actual.push({ ns: harnessId(rows[0]!.ns), until: integer(rows[0]!.lease_until) });
+        }
+        return actual;
+      },
       orderingTies: async () => {
         await f.authority.inspectionDb.query(
           "UPDATE inbox SET received_at=1 WHERE starts_with(ns,$1)",

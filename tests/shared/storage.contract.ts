@@ -22,6 +22,8 @@ import { canonical, MAX_INLINE_INPUT_BYTES, MAX_INPUT_BYTES } from "../../src/in
 import { computeSha256 as sha } from "../../src/domain.ts";
 import type { ObjectKey } from "../../src/payload.ts";
 
+export type LeaseExpiry = Pick<Lease, "ns" | "until">;
+
 export type ContractFixture = {
   backend: Backend;
   ns: HarnessId;
@@ -34,6 +36,8 @@ export type ContractFixture = {
   advanceAuthorityClock(ms: number): Promise<void>;
   /** Test-only tie setup; PG edits only its isolated schema, memory already has a fixed clock. */
   orderingTies(): Promise<void>;
+  /** Set exact test-namespace expiries, expire all of them, and return their actual stored times. */
+  setExpiredLeases(expiries: readonly LeaseExpiry[]): Promise<LeaseExpiry[]>;
   finish(): Promise<void>;
 };
 
@@ -334,38 +338,45 @@ export function contracts(name: string, make: Factory) {
         await f.finish();
       }
     });
-    it("eligible limit five orders actual lease expiry before namespace and creation order", async () => {
-      const f = await make();
+    for (const setupGapMs of [0, 100])
+      it(`eligible limit five orders actual lease expiry before namespace and creation order${setupGapMs ? " with 100ms setup gaps" : ""}`, async () => {
+        const f = await make();
 
-      try {
-        const leases: Lease[] = [];
+        try {
+          const targets: LeaseExpiry[] = [];
 
-        for (const [i, remaining] of [71, 11, 51, 1, 61, 21, 41].entries()) {
-          const ns = `${f.ns}_${6 - i}` as HarnessId;
+          for (const [i, offset] of [71, 11, 51, 1, 61, 21, 41].entries()) {
+            const ns = `${f.ns}_${6 - i}` as HarnessId;
 
-          await f.authority.receive(ns, requestId("one"), input);
+            await f.authority.receive(ns, requestId("one"), input);
+            targets.push({ ns, until: 1000000 + offset });
+            if (setupGapMs) await f.advanceAuthorityClock(setupGapMs);
+          }
 
-          const c = await f.authority.claim(ns, remaining);
+          // Round trips can exceed the expiry differences. Control persisted expiry, not
+          // claim response timing; the delayed variant covers DSQL-scale setup latency.
+          const leases = await f.setExpiredLeases(targets);
 
-          check(c.kind === "claimed", "fresh claim");
-          leases.push(c.lease);
-          await f.advanceAuthorityClock(5);
+          expect(leases).toEqual(targets);
+          expect(new Set(leases.map((l) => l.until)).size).toBeGreaterThan(3);
+
+          const expected = [...leases]
+            .sort((a, b) => a.until - b.until || (a.ns < b.ns ? -1 : a.ns > b.ns ? 1 : 0))
+            .slice(0, 5)
+            .map((l) => l.ns);
+
+          expect(expected).not.toEqual(leases.slice(0, 5).map((l) => l.ns));
+          expect(expected).not.toEqual(
+            leases
+              .map((l) => l.ns)
+              .sort()
+              .slice(0, 5),
+          );
+          expect(await f.authority.eligible()).toEqual(expected);
+        } finally {
+          await f.finish();
         }
-
-        expect(new Set(leases.map((l) => l.until)).size).toBeGreaterThan(3);
-        await f.advanceAuthorityClock(2200);
-
-        const expected = [...leases]
-          .sort((a, b) => a.until - b.until || (a.ns < b.ns ? -1 : a.ns > b.ns ? 1 : 0))
-          .slice(0, 5)
-          .map((l) => l.ns);
-
-        expect(expected).not.toEqual(leases.slice(0, 5).map((l) => l.ns));
-        expect(await f.authority.eligible()).toEqual(expected);
-      } finally {
-        await f.finish();
-      }
-    });
+      });
     it("authority detaches accepted input and admission identity before awaiting", async () => {
       const f = await make();
 
