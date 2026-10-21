@@ -8,7 +8,10 @@ import type { WorkerAuthority, Received } from "./authority.ts";
 import type { AgentInput } from "./input.ts";
 import type { Events } from "./dispatch.ts";
 
-/** Invocation-scoped acquisition and diagnostics; the worker closes acquired handles before release. */
+/**
+ * Closes opened Harness/Storage before release and the authority handle afterward in finally,
+ * including when release is skipped.
+ */
 export interface WorkerDependencies {
   /** Returns a handle owned and closed by this invocation. */
   connectAuthority(): Promise<WorkerAuthority>;

@@ -23,20 +23,20 @@ export const MAX_BLOCKS = 64;
 export const MAX_IMAGES = 8;
 
 /** Validated Pi content and the admission policy to use while the agent is busy. */
-export interface AgentInput {
+export type AgentInput = {
   readonly content: UserInput;
   readonly whenBusy: "steer" | "followUp";
-}
+};
 
 /** Namespace-scoped staging key; unlike a published key, the caller may still mutate its bytes. */
 export type StagedKey = string & { readonly __stagedKey: unique symbol };
 
 /** Integrity of raw uploaded bytes, not the canonical input identity. */
-export interface StagedReference {
+export type StagedReference = {
   readonly key: StagedKey;
   readonly sha256: Sha256;
   readonly bytes: number;
-}
+};
 
 /** Inline logical input or a reference to raw staging bytes that must still be read and verified. */
 export type Command =
@@ -48,12 +48,12 @@ export type PreparedCommand =
   | { readonly kind: "inline"; readonly canonical: CanonicalInput }
   | Extract<Command, { kind: "s3" }>;
 
-export interface CanonicalInput {
+export type CanonicalInput = {
   readonly input: AgentInput;
   readonly json: string;
   readonly sha256: Sha256;
   readonly bytes: number;
-}
+};
 
 const IMAGE_MIME_TYPES: readonly string[] = ["image/png", "image/jpeg", "image/webp", "image/gif"];
 

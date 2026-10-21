@@ -35,15 +35,16 @@ export function jsonText(value: unknown): string {
 export type ObjectKey = string & { readonly __objectKey: unique symbol };
 
 /**
- * Metadata for published canonical input, not proof that the object exists or is durable.
- * The publisher must confirm durable bytes and keep them immutable for the receipt lifetime.
+ * Immutable published JSON metadata shared by receipt, history, and document payloads.
+ * Validating this shape does not prove publication; the publisher must confirm durable bytes
+ * and retain them unchanged while any durable reference remains.
  */
-export interface PublishedPayload {
+export type PublishedPayload = {
   readonly kind: "s3";
   readonly key: ObjectKey;
   readonly sha256: Sha256;
   readonly bytes: number;
-}
+};
 
 /** Receipt content: canonical inline JSON or metadata for an immutable published object. */
 export type StoredPayload = { readonly kind: "inline"; readonly json: string } | PublishedPayload;
