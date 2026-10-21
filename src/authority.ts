@@ -6,6 +6,7 @@ import type { StoredPayload } from "./payload.ts";
 /**
  * Validated canonical Pi input, inline or already durably published, and its canonical SHA-256.
  * SQL validates reference metadata, not object existence. Publishers guarantee immutability.
+ * Public data shapes use aliases to preserve implicit index signatures for record/JSON consumers.
  */
 export type AcceptedInput = {
   readonly hash: Sha256;
@@ -31,6 +32,7 @@ export type Admitted = Omit<Received, "kind"> & {
   readonly submission: SubmissionId;
 };
 
+/** A receipt stays immutable except for its monotonic mapping to an admitted submission. */
 export type InboxItem = Received | Admitted;
 
 /** Receipt storage. Each method is atomic; backing lifetime is adapter-specific. */
@@ -46,7 +48,12 @@ export interface Authority {
     request: RequestId,
     accepted: AcceptedInput,
   ): Promise<{ duplicate: boolean; item: InboxItem }>;
+  /** Claims only a strictly expired lease; remainingMs is the invocation budget, not a renewal. */
   claim(ns: HarnessId, remainingMs: number): Promise<Claim>;
+  /**
+   * Callers release only after a clean joined Storage close. After an uncertain write or close,
+   * do not call release; let the lease expire.
+   */
   release(lease: Lease): Promise<"released" | "lost">;
   /** At most eight unmapped receipts, oldest first. */
   received(ns: HarnessId): Promise<Received[]>;

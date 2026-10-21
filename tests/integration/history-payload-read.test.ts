@@ -38,7 +38,7 @@ it("cold-opens inline and S3 history from persisted references, fetching only S3
   }
 });
 
-for (const kind of ["inline", "s3"] as const)
+for (const kind of ["inline", "s3"] as const) {
   it(`rejects both-present ${kind} entry payloads regardless of their kind tag`, async () => {
     const f = await historyFixture("payload_both", { objects: memoryObjects });
     let ref: string | undefined;
@@ -53,30 +53,33 @@ for (const kind of ["inline", "s3"] as const)
         (await f.control.query("SELECT payload_ref FROM records WHERE ns=$1 AND id=20", [f.ns]))[0]!
           .payload_ref,
       );
-      if (kind === "inline")
+      if (kind === "inline") {
         await f.control.query(
           "INSERT INTO s3_payloads(ns,payload_ref,object_key,sha256,bytes) VALUES($1,$2,$3,$4,2)",
           [f.ns, ref, `p/${f.ns}/${randomUUID()}`, computeSha256("{}")],
         );
-      else
+      } else {
         await f.control.query("INSERT INTO inline_payloads(ns,payload_ref,json) VALUES($1,$2,$3)", [
           f.ns,
           ref,
           "{}",
         ]);
+      }
       f.memory.operations.length = 0;
 
       await expect(f.storage.entry(entryId(20), context)).rejects.toThrow(`${f.ns}/records/20`);
       expect(f.memory.operations).toEqual([]); // Do not fetch an incoherent S3 union.
     } finally {
-      if (ref)
+      if (ref) {
         await f.control.query(
           `DELETE FROM ${kind === "inline" ? "s3_payloads" : "inline_payloads"} WHERE ns=$1 AND payload_ref=$2`,
           [f.ns, ref],
         );
+      }
       await f.finish();
     }
   });
+}
 
 for (const state of [
   "missing-row",
@@ -85,7 +88,7 @@ for (const state of [
   "non-v4-ref",
   "bad-json",
   "oversized-inline",
-] as const)
+] as const) {
   it(`rejects an inline owner with ${state} and identifies the owner`, async () => {
     const f = await historyFixture("payload_inline_bad", { objects: memoryObjects });
 
@@ -96,34 +99,40 @@ for (const state of [
           .payload_ref,
       );
 
-      if (state === "missing-row")
+      if (state === "missing-row") {
         await f.control.query("DELETE FROM inline_payloads WHERE ns=$1 AND payload_ref=$2", [
           f.ns,
           ref,
         ]);
-      if (state === "kind-mismatch")
+      }
+      if (state === "kind-mismatch") {
         await f.control.query("UPDATE records SET payload_kind='s3' WHERE ns=$1 AND id=20", [f.ns]);
-      if (state === "dangling-ref" || state === "non-v4-ref")
+      }
+      if (state === "dangling-ref" || state === "non-v4-ref") {
         await f.control.query("UPDATE records SET payload_ref=$2 WHERE ns=$1 AND id=20", [
           f.ns,
           state === "dangling-ref" ? randomUUID() : "00000000-0000-0000-0000-000000000000",
         ]);
-      if (state === "bad-json" || state === "oversized-inline")
+      }
+      if (state === "bad-json" || state === "oversized-inline") {
         await f.control.query("UPDATE inline_payloads SET json=$3 WHERE ns=$1 AND payload_ref=$2", [
           f.ns,
           ref,
           state === "bad-json" ? "not-json" : JSON.stringify("x".repeat(LIMITS.maxInlineBytes)),
         ]);
+      }
 
       await expect(f.storage.entry(entryId(20), context)).rejects.toThrow(`${f.ns}/records/20`);
       expect(f.memory.operations).toEqual([]);
     } finally {
       // These tests deliberately sever owner/payload links; remove their corrupt rows explicitly.
-      for (const table of ["records", "inline_payloads", "s3_payloads"])
+      for (const table of ["records", "inline_payloads", "s3_payloads"]) {
         await f.control.query(`DELETE FROM ${table} WHERE ns=$1`, [f.ns]);
+      }
       await f.finish();
     }
   });
+}
 
 for (const state of [
   "missing-row",
@@ -137,7 +146,7 @@ for (const state of [
   "malformed-key",
   "invalid-json",
   "invalid-utf8",
-] as const)
+] as const) {
   it(`rejects an S3 owner with ${state} and identifies the owner`, async () => {
     const f = await historyFixture("payload_s3_bad", { objects: memoryObjects });
 
@@ -158,18 +167,21 @@ for (const state of [
           value,
         ]);
 
-      if (state === "missing-row")
+      if (state === "missing-row") {
         await f.control.query("DELETE FROM s3_payloads WHERE ns=$1 AND payload_ref=$2", [
           f.ns,
           ref,
         ]);
-      if (state === "kind-mismatch")
+      }
+      if (state === "kind-mismatch") {
         await f.control.query("UPDATE records SET payload_kind='inline' WHERE ns=$1 AND id=20", [
           f.ns,
         ]);
+      }
       if (state === "missing-object") f.memory.bodies.delete(key);
-      if (state === "wrong-bytes")
+      if (state === "wrong-bytes") {
         f.memory.bodies.set(key, Buffer.from("z".repeat(integer(row.bytes))));
+      }
       if (state === "wrong-length") await update("bytes", integer(row.bytes) + 1);
       if (state === "wrong-hash") await update("sha256", computeSha256("wrong"));
       if (state === "invalid-digest") await update("sha256", "BAD");
@@ -193,15 +205,16 @@ for (const state of [
           "foreign-namespace",
           "malformed-key",
         ].includes(state)
-      )
+      ) {
         expect(f.memory.operations).toEqual([]);
-      else expect(f.memory.operations).toEqual([{ operation: "GET", key }]);
+      } else expect(f.memory.operations).toEqual([{ operation: "GET", key }]);
     } finally {
       await f.finish();
     }
   });
+}
 
-for (const kind of ["inline", "s3"] as const)
+for (const kind of ["inline", "s3"] as const) {
   it(`does not decode an unselected corrupt ${kind} owner, but rejects it in the next SQL page`, async () => {
     const f = await historyFixture("payload_projection", { objects: memoryObjects });
 
@@ -220,16 +233,17 @@ for (const kind of ["inline", "s3"] as const)
           .payload_ref,
       );
 
-      if (kind === "inline")
+      if (kind === "inline") {
         await f.control.query(
           "UPDATE inline_payloads SET json='not-json' WHERE ns=$1 AND payload_ref=$2",
           [f.ns, ref],
         );
-      else
+      } else {
         await f.control.query(
           "UPDATE s3_payloads SET object_key='bad-key' WHERE ns=$1 AND payload_ref=$2",
           [f.ns, ref],
         );
+      }
       f.memory.operations.length = 0;
       const first = await f.storage.scanEntries(
         { conversationId: rootId, order: "ascending" },
@@ -257,3 +271,4 @@ for (const kind of ["inline", "s3"] as const)
       await f.finish();
     }
   });
+}

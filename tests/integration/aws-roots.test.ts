@@ -125,7 +125,7 @@ it("injected AWS roots: PG receipt -> captured delivery -> actual Harness -> col
       connectAuthority: () => f.backend.connectAuthority(),
       dispatch: {
         async wake() {
-          throw Error("lost hint");
+          throw new Error("lost hint");
         },
       },
     }));
@@ -208,13 +208,16 @@ it("actual immutable SDK adapter publishes a >6 MiB image; PG worker handoff col
     let images = 0;
     const stream = fresh.models.streamSimple.bind(fresh.models);
     fresh.models.streamSimple = (model, transcript, options) => {
-      for (const message of transcript.messages)
-        if (message.role === "user" && Array.isArray(message.content))
-          for (const block of message.content)
+      for (const message of transcript.messages) {
+        if (message.role === "user" && Array.isArray(message.content)) {
+          for (const block of message.content) {
             if (block.type === "image") {
               expect(computeSha256(block.data)).toBe(imageFixture.base64Sha256);
               images++;
             }
+          }
+        }
+      }
       return stream(model, transcript, options);
     };
     const cold = workerRoot(() =>

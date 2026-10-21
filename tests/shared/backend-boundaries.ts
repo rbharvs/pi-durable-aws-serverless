@@ -17,10 +17,10 @@ import { input, publishSubmission, type Factory } from "./storage.contract.ts";
 
 export function boundaries(name: string, make: Factory) {
   describe(`${name}/observable boundaries`, () => {
-    for (const tag of ["document", "unknown", undefined])
+    for (const tag of ["document", "unknown", undefined]) {
       it(`rejects raw write tag ${String(tag)} without publication, allocation or sequence changes`, async () => {
-        const f = await make(),
-          s = await f.backend.openStorage(f.lease);
+        const f = await make();
+        const s = await f.backend.openStorage(f.lease);
         try {
           const before = await s.commit([], context);
           const result = await s
@@ -86,9 +86,10 @@ export function boundaries(name: string, make: Factory) {
           await f.finish();
         }
       });
+    }
     it("raw document rejection precedes queueing even when close immediately seals the handle", async () => {
-      const f = await make(),
-        s = await f.backend.openStorage(f.lease);
+      const f = await make();
+      const s = await f.backend.openStorage(f.lease);
       try {
         const result = s
           .commit(
@@ -139,8 +140,8 @@ export function boundaries(name: string, make: Factory) {
       }
     });
     it("unminted document copies reserve IDs through retirement, rejected batches and takeover", async () => {
-      const f = await make(),
-        s = await f.backend.openStorage(f.lease);
+      const f = await make();
+      const s = await f.backend.openStorage(f.lease);
       let cold: Storage | undefined;
       const record = (id: number, conversation = 10) => ({
         id: idFromNumber<DocumentId>(id),
@@ -196,8 +197,9 @@ export function boundaries(name: string, make: Factory) {
         for (const write of [
           copy(80),
           { type: "document.create" as const, record: record(80, 11), content },
-        ])
+        ]) {
           await expect(cold.commit([write], context)).rejects.toThrow();
+        }
         expect(await cold.mintId()).toBe(82);
         expect(await cold.commit([], context)).toBe(seq + 1);
         expect(await cold.document(idFromNumber<DocumentId>(40), "current", context)).toMatchObject(
@@ -210,8 +212,8 @@ export function boundaries(name: string, make: Factory) {
       }
     });
     it("exhaustion sentinel survives close/reopen without wrapping or poisoning reads and commits", async () => {
-      const f = await make(),
-        s = await f.backend.openStorage(f.lease);
+      const f = await make();
+      const s = await f.backend.openStorage(f.lease);
       const id = idFromNumber<ConversationId>(Number.MAX_SAFE_INTEGER);
       let cold: Storage | undefined;
       try {
@@ -230,8 +232,8 @@ export function boundaries(name: string, make: Factory) {
       }
     });
     it("each Pi live task/submission state alone is discoverable, terminal states are not", async () => {
-      const f = await make(),
-        s = await f.backend.openStorage(f.lease);
+      const f = await make();
+      const s = await f.backend.openStorage(f.lease);
       try {
         await f.expire();
         const task = {
@@ -255,7 +257,7 @@ export function boundaries(name: string, make: Factory) {
             ...task,
             state: { status: "terminal", outcome: { status: "completed", result: null } },
           },
-        ] satisfies Extract<StorageWrite, { type: "task" }>["value"][];
+        ] satisfies Array<Extract<StorageWrite, { type: "task" }>["value"]>;
         for (const value of tasks) {
           await s.commit([{ type: "task", value }], context);
           expect(await f.authority.hasWork(f.ns)).toBe(value.state.status !== "terminal");
@@ -332,9 +334,9 @@ export function boundaries(name: string, make: Factory) {
       }
     });
     it("closing handles preserves receipts, allocations and history; closed handles reject operations", async () => {
-      const f = await make(),
-        a = await f.backend.connectAuthority(),
-        s = await f.backend.openStorage(f.lease);
+      const f = await make();
+      const a = await f.backend.connectAuthority();
+      const s = await f.backend.openStorage(f.lease);
       try {
         const minted = await s.mintId<EntryId>();
         await s.commit(
@@ -368,8 +370,8 @@ export function boundaries(name: string, make: Factory) {
       }
     });
     it("read query/cursor inputs and returned metadata are detached, including queued reads", async () => {
-      const f = await make(),
-        s = await f.backend.openStorage(f.lease);
+      const f = await make();
+      const s = await f.backend.openStorage(f.lease);
       const root = idFromNumber<ConversationId>(1);
       try {
         await s.commit(
@@ -387,8 +389,8 @@ export function boundaries(name: string, make: Factory) {
           ],
           context,
         );
-        const query = { conversationId: root, order: "ascending" as const },
-          cursor = { after: 20, order: "ascending" as const };
+        const query = { conversationId: root, order: "ascending" as const };
+        const cursor = { after: 20, order: "ascending" as const };
         const pending = s.scanEntries(query, 1, cursor, context);
         query.conversationId = idFromNumber(999);
         cursor.after = 999;
@@ -404,10 +406,10 @@ export function boundaries(name: string, make: Factory) {
         await f.finish();
       }
     });
-    for (const bad of [NaN, Infinity, 1.5, Number.MAX_SAFE_INTEGER + 1, "20"])
+    for (const bad of [NaN, Infinity, 1.5, Number.MAX_SAFE_INTEGER + 1, "20"]) {
       it(`rejects unsafe read selectors ${String(bad)} without poisoning handle`, async () => {
-        const f = await make(),
-          s = await f.backend.openStorage(f.lease);
+        const f = await make();
+        const s = await f.backend.openStorage(f.lease);
         try {
           await expect(s.conversation(bad as ConversationId, context)).rejects.toBeInstanceOf(
             StorageRequestError,
@@ -427,9 +429,10 @@ export function boundaries(name: string, make: Factory) {
           await f.finish();
         }
       });
+    }
     it("malformed task batch cannot partially publish earlier records, discovery or allocation", async () => {
-      const f = await make(),
-        s = await f.backend.openStorage(f.lease);
+      const f = await make();
+      const s = await f.backend.openStorage(f.lease);
       try {
         await expect(
           s.commit(

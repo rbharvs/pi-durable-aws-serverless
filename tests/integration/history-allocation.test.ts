@@ -97,8 +97,9 @@ it("last safe ID is allocated exactly once, exhaustion persists across reopen, a
     expect(await f.storage.mintId()).toBe(Number.MAX_SAFE_INTEGER);
     const before = await f.snapshot();
 
-    for (let i = 0; i < 2; i++)
+    for (let i = 0; i < 2; i++) {
       await expect(f.storage.mintId()).rejects.toThrow("ID space is exhausted");
+    }
     expect(await f.snapshot()).toEqual(before);
     expect(f.storage.status).toBe("open");
     expect(
@@ -202,7 +203,7 @@ it("an actual server serialization abort during allocation retries and acknowled
   }
 });
 
-for (const representation of ["string", "number"] as const)
+for (const representation of ["string", "number"] as const) {
   it(`cold-reopens the final safe commit with an exhausted ${representation} sequence head`, async () => {
     const f = await historyFixture("sequence_exhaustion");
     try {
@@ -260,6 +261,7 @@ for (const representation of ["string", "number"] as const)
       await f.finish();
     }
   });
+}
 
 it("cold-reopens when both counters are exhausted and reports ID exhaustion without poisoning reads", async () => {
   const f = await historyFixture("both_exhausted");
@@ -297,8 +299,8 @@ it("cold-reopens when both counters are exhausted and reports ID exhaustion with
   }
 });
 
-for (const column of ["next_id", "next_seq"] as const)
-  for (const invalid of ["9007199254740993", "9007199254740994"])
+for (const column of ["next_id", "next_seq"] as const) {
+  for (const invalid of ["9007199254740993", "9007199254740994"]) {
     it(`rejects nonsentinel unsafe ${column} head ${invalid} when opening`, async () => {
       const f = await historyFixture("invalid_head");
       try {
@@ -311,3 +313,5 @@ for (const column of ["next_id", "next_seq"] as const)
         await f.finish();
       }
     });
+  }
+}

@@ -3,7 +3,7 @@ import { PayloadCorrupt } from "../../src/sql/payloads.ts";
 import { context, historyFixture } from "./history-support.ts";
 import { documentCreate, documentId } from "./document-support.ts";
 
-for (const root of [[], null, 7])
+for (const root of [[], null, 7]) {
   it(`rejects a non-object root ${JSON.stringify(root)} at an intermediate stored revision even if a later delta restores an object`, async () => {
     const f = await historyFixture("invalid_root_tail");
     try {
@@ -36,6 +36,7 @@ for (const root of [[], null, 7])
       await f.finish();
     }
   });
+}
 
 it("rejects decoded nonfinite delta data rather than returning a non-JSON value", async () => {
   const f = await historyFixture("nonfinite_tail");

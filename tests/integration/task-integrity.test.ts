@@ -11,7 +11,7 @@ import type { StorageWrite } from "@earendil-works/pi-durable";
 import { context, dataEntry, entry, historyFixture, memoryObjects } from "./history-support.ts";
 import { submission, submissionId, task, taskId } from "./task-support.ts";
 
-for (const bad of ["20", 0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1])
+for (const bad of ["20", 0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1]) {
   for (const field of [
     "task.id",
     "task.conversationId",
@@ -22,7 +22,7 @@ for (const bad of ["20", 0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1])
     "submission.entry",
     "submission.answer",
     "entry.byTaskId",
-  ])
+  ]) {
     it(`rejects non-ID ${JSON.stringify(bad)} in ${field} before write SQL`, async () => {
       const f = await historyFixture("new_identity");
       try {
@@ -33,11 +33,11 @@ for (const bad of ["20", 0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1])
             : submission();
         const value: Record<string, unknown> = write.value;
         const key = field.split(".")[1]!;
-        if (key === "on")
+        if (key === "on") {
           value.state = { status: "waiting", checkpoint: null, on: [bad], policy: "allSettled" };
-        else if (key === "entry" || key === "answer")
+        } else if (key === "entry" || key === "answer") {
           Object.assign(value, { status: "done", entry: 40, answer: 41, [key]: bad });
-        else value[key] = bad;
+        } else value[key] = bad;
         await expect(f.storage.commit([write], context)).rejects.toBeInstanceOf(
           StorageRequestError,
         );
@@ -46,8 +46,10 @@ for (const bad of ["20", 0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1])
         await f.finish();
       }
     });
+  }
+}
 
-for (const value of [0, -1, -Number.MAX_SAFE_INTEGER, Number.MAX_SAFE_INTEGER])
+for (const value of [0, -1, -Number.MAX_SAFE_INTEGER, Number.MAX_SAFE_INTEGER]) {
   it(`treats signed safe selector ${value} as an ordinary empty read`, async () => {
     const f = await historyFixture("new_selector");
     try {
@@ -80,8 +82,9 @@ for (const value of [0, -1, -Number.MAX_SAFE_INTEGER, Number.MAX_SAFE_INTEGER])
       await f.finish();
     }
   });
+}
 
-for (const value of ["20", 1.5, Number.MAX_SAFE_INTEGER + 1, -Number.MAX_SAFE_INTEGER - 1])
+for (const value of ["20", 1.5, Number.MAX_SAFE_INTEGER + 1, -Number.MAX_SAFE_INTEGER - 1]) {
   it(`rejects unsafe/non-number selector ${JSON.stringify(value)}`, async () => {
     const f = await historyFixture("bad_selector");
     try {
@@ -98,18 +101,20 @@ for (const value of ["20", 1.5, Number.MAX_SAFE_INTEGER + 1, -Number.MAX_SAFE_IN
             undefined,
             context,
           ),
-      ])
+      ]) {
         await expect(operation()).rejects.toBeInstanceOf(StorageRequestError);
+      }
     } finally {
       await f.finish();
     }
   });
+}
 
-const corruptions: {
+const corruptions: Array<{
   type: "task" | "submission" | "entry";
   name: string;
   patch: Record<string, unknown>;
-}[] = [
+}> = [
   ...["20", 0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1].flatMap((value) => [
     { type: "task" as const, name: `id ${value}`, patch: { id: value } },
     { type: "task" as const, name: `owner ${value}`, patch: { owner: value } },
@@ -173,7 +178,7 @@ const corruptions: {
     patch: { type: "write", status: "unanswered", entry: 40, reason: "failed" },
   },
 ];
-for (const { type, name, patch } of corruptions)
+for (const { type, name, patch } of corruptions) {
   it(`classifies stored ${type} ${name} as PayloadCorrupt, never a caller request error`, async () => {
     const f = await historyFixture("state_corrupt");
     try {
@@ -196,6 +201,7 @@ for (const { type, name, patch } of corruptions)
       await f.finish();
     }
   });
+}
 
 // Representative read-corruption cases must also fail as writes, without persisting poison.
 for (const { type, name, patch } of corruptions.filter(({ name }) =>
@@ -209,7 +215,7 @@ for (const { type, name, patch } of corruptions.filter(({ name }) =>
     "placed write",
     "unanswered write entry",
   ].includes(name),
-))
+)) {
   it(`rejects malformed ${type} ${name} before queueing SQL or uploads`, async () => {
     const f = await historyFixture("invalid_record_write", { objects: memoryObjects });
     try {
@@ -236,10 +242,11 @@ for (const { type, name, patch } of corruptions.filter(({ name }) =>
       await f.finish();
     }
   });
+}
 
 // Missing results are valid for Pi void tasks (see task-pi-records.test.ts).
 // Non-JSON results must still fail: this JSON number overflows to Infinity on decode.
-for (const status of ["completing", "terminal"] as const)
+for (const status of ["completing", "terminal"] as const) {
   it(`rejects a non-finite ${status} result through point reads and scans`, async () => {
     const f = await historyFixture("non_json_result");
     try {
@@ -257,6 +264,7 @@ for (const status of ["completing", "terminal"] as const)
       await f.finish();
     }
   });
+}
 
 for (const [type, assignment] of [
   ["task", "conversation_id=2"],
@@ -267,7 +275,7 @@ for (const [type, assignment] of [
   ["submission", "conversation_id=2"],
   ["submission", "status='done'"],
   ["submission", "request_hash='wrong'"],
-] as const)
+] as const) {
   it(`rejects incoherent ${type} index ${assignment} through point reads and scans`, async () => {
     const f = await historyFixture("state_index");
     try {
@@ -287,3 +295,4 @@ for (const [type, assignment] of [
       await f.finish();
     }
   });
+}

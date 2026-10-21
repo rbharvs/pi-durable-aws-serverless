@@ -24,7 +24,7 @@ import { RequestConflict } from "./faults.ts";
 import { freezeWrites } from "./write-bounds.ts";
 import { writeShape } from "./storage-validation.ts";
 
-type Head = {
+interface Head {
   epoch: number;
   owner: string | null;
   until: number;
@@ -34,7 +34,7 @@ type Head = {
   receipts: Map<RequestId, InboxItem>;
   tasks: Map<number, boolean>;
   submissions: Map<number, boolean>;
-};
+}
 
 function hasWork(head: Head): boolean {
   return (
@@ -46,19 +46,22 @@ function hasWork(head: Head): boolean {
 
 function updateWork(head: Head, writes: readonly StorageWrite[]): void {
   for (const write of writes) {
-    if (write.type === "task")
+    if (write.type === "task") {
       head.tasks.set(write.value.id, write.value.state.status !== "terminal");
-    if (write.type === "submission")
+    }
+    if (write.type === "submission") {
       head.submissions.set(
         write.value.id,
         write.value.status === "queued" || write.value.status === "placed",
       );
+    }
   }
 }
 
 function safeSelector(value: unknown): void {
-  if (typeof value !== "number" || !Number.isSafeInteger(value))
+  if (typeof value !== "number" || !Number.isSafeInteger(value)) {
     throw new StorageRequestError("Expected safe integer number");
+  }
 }
 
 /** Validate numeric selectors, not Pi's document or scan semantics. Context stays caller-owned. */
@@ -75,8 +78,9 @@ function readArguments(key: keyof Storage, args: unknown[]): unknown[] {
       "submissionByRequest",
       "findLatestHeadMarker",
     ].includes(key)
-  )
+  ) {
     safeSelector(first);
+  }
   if (key === "entry" && data.length === 2) safeSelector(second);
   if (key === "findLatestHeadMarker" && second !== undefined) safeSelector(second);
   if ((key === "document" || key === "findDocument") && second !== "current") safeSelector(second);
@@ -88,8 +92,9 @@ function readArguments(key: keyof Storage, args: unknown[]): unknown[] {
       "ownerTaskId",
       "minEntryId",
       "maxEntryId",
-    ])
+    ]) {
       if (query[field] !== undefined) safeSelector(query[field]);
+    }
     if (key === "scanDocuments" && query.at !== "current") safeSelector(query.at);
     if (query.scope !== undefined) {
       const scope = query.scope as Record<string, unknown>;
@@ -100,6 +105,7 @@ function readArguments(key: keyof Storage, args: unknown[]): unknown[] {
   return [...data, args.at(-1)];
 }
 
+/** Clock injection for the process-local backend; closing a handle does not discard backing state. */
 export interface MemoryBackendOptions {
   /** Unix epoch milliseconds. Inject a deterministic clock for tests; defaults to Date.now. */
   readonly now?: () => number;
@@ -112,22 +118,22 @@ export interface MemoryBackendOptions {
  */
 export function createMemoryBackend(options: MemoryBackendOptions = {}): Backend {
   const now = options.now?.bind(options) ?? Date.now;
-  const heads = new Map<HarnessId, Head>(),
-    issued = new WeakSet<Lease>();
+  const heads = new Map<HarnessId, Head>();
+  const issued = new WeakSet<Lease>();
   function time(): number {
     const value = now();
     check(Number.isSafeInteger(value) && value >= 0, "Invalid authority clock");
     return value;
   }
   function head(ns: HarnessId): Head {
-    const h = heads.get(ns);
-    check(h, "Unknown namespace");
-    return h;
+    const namespaceHead = heads.get(ns);
+    check(namespaceHead, "Unknown namespace");
+    return namespaceHead;
   }
   function ensure(ns: HarnessId, at: number): Head {
-    let h = heads.get(ns);
-    if (!h) {
-      h = {
+    let namespaceHead = heads.get(ns);
+    if (!namespaceHead) {
+      namespaceHead = {
         epoch: 0,
         owner: null,
         until: at - 1,
@@ -137,16 +143,16 @@ export function createMemoryBackend(options: MemoryBackendOptions = {}): Backend
         tasks: new Map(),
         submissions: new Map(),
       };
-      heads.set(ns, h);
+      heads.set(ns, namespaceHead);
     }
-    return h;
+    return namespaceHead;
   }
-  function fence(h: Head, lease: Lease, seq?: number): void {
+  function fence(namespaceHead: Head, lease: Lease, seq?: number): void {
     check(
       issued.has(lease) &&
-        h.epoch === lease.epoch &&
-        h.owner === lease.owner &&
-        (seq === undefined || h.nextSeq === seq),
+        namespaceHead.epoch === lease.epoch &&
+        namespaceHead.owner === lease.owner &&
+        (seq === undefined || namespaceHead.nextSeq === seq),
       "Stale owner epoch or sequence",
     );
   }
@@ -168,8 +174,8 @@ export function createMemoryBackend(options: MemoryBackendOptions = {}): Backend
           run(() => {
             harnessId(ns);
             requestId(request);
-            const hash = parseSha256(input.hash),
-              source = structuredClone(input.payload);
+            const hash = parseSha256(input.hash);
+            const source = structuredClone(input.payload);
             let payload;
             if (source.kind === "inline") {
               payload = {
@@ -180,15 +186,15 @@ export function createMemoryBackend(options: MemoryBackendOptions = {}): Backend
               payload = publishedPayload(ns, source);
               check(payload.sha256 === hash, "Inbox payload integrity");
             }
-            const at = time(),
-              h = ensure(ns, at),
-              prior = h.receipts.get(request);
+            const at = time();
+            const namespaceHead = ensure(ns, at);
+            const prior = namespaceHead.receipts.get(request);
             if (prior) {
               if (prior.hash !== hash) throw new RequestConflict();
               return { duplicate: true, item: structuredClone(prior) };
             }
             const item: Received = { kind: "received", ns, request, hash, payload, receivedAt: at };
-            h.receipts.set(request, item);
+            namespaceHead.receipts.set(request, item);
             return { duplicate: false, item: structuredClone(item) };
           }),
         claim: (ns, remainingMs) =>
@@ -198,18 +204,18 @@ export function createMemoryBackend(options: MemoryBackendOptions = {}): Backend
               Number.isSafeInteger(remainingMs) && remainingMs > 0 && remainingMs <= 900000,
               "Invalid remaining invocation time",
             );
-            const h = head(ns),
-              at = time();
-            if (!(h.until < at)) return { kind: "held" };
-            const owner = ownerToken(),
-              generation = epoch(h.epoch + 1),
-              until = at + remainingMs + LEASE_MARGIN_MS;
+            const namespaceHead = head(ns);
+            const at = time();
+            if (!(namespaceHead.until < at)) return { kind: "held" };
+            const owner = ownerToken();
+            const generation = epoch(namespaceHead.epoch + 1);
+            const until = at + remainingMs + LEASE_MARGIN_MS;
             check(Number.isSafeInteger(until), "Invalid lease deadline");
             const lease = issueLease(ns, owner, generation, until);
             issued.add(lease);
-            h.epoch = generation;
-            h.owner = owner;
-            h.until = until;
+            namespaceHead.epoch = generation;
+            namespaceHead.owner = owner;
+            namespaceHead.until = until;
             return { kind: "claimed", lease };
           }),
         received: (ns) =>
@@ -235,34 +241,43 @@ export function createMemoryBackend(options: MemoryBackendOptions = {}): Backend
               typeof id === "number" && Number.isSafeInteger(id) && id > 0,
               "Invalid submission ID",
             );
-            const h = head(ns),
-              prior = h.receipts.get(request);
+            const namespaceHead = head(ns);
+            const prior = namespaceHead.receipts.get(request);
             check(prior && prior.hash === hash, "Inbox identity changed");
             if (prior.kind === "admitted") {
               check(prior.submission === id, "Admission mapping changed");
               return;
             }
-            check(h.submissions.has(id), "Submission missing or admission mapping changed");
-            h.receipts.set(request, { ...prior, kind: "admitted", submission: id });
+            check(
+              namespaceHead.submissions.has(id),
+              "Submission missing or admission mapping changed",
+            );
+            namespaceHead.receipts.set(request, { ...prior, kind: "admitted", submission: id });
           }),
         hasWork: (ns) => run(() => hasWork(head(ns))),
         eligible: () =>
           run(() => {
             const at = time();
             return [...heads]
-              .filter(([, h]) => h.until < at && hasWork(h))
+              .filter(([, namespaceHead]) => namespaceHead.until < at && hasWork(namespaceHead))
               .sort(([a, x], [b, y]) => x.until - y.until || (a < b ? -1 : a > b ? 1 : 0))
               .slice(0, 5)
               .map(([ns]) => ns);
           }),
         release: (lease) =>
           run(() => {
-            const h = heads.get(lease.ns);
-            if (!h || !issued.has(lease) || h.epoch !== lease.epoch || h.owner !== lease.owner)
+            const namespaceHead = heads.get(lease.ns);
+            if (
+              !namespaceHead ||
+              !issued.has(lease) ||
+              namespaceHead.epoch !== lease.epoch ||
+              namespaceHead.owner !== lease.owner
+            ) {
               return "lost";
+            }
             const at = time();
-            h.owner = null;
-            h.until = at;
+            namespaceHead.owner = null;
+            namespaceHead.until = at;
             return "released";
           }),
         close: async () => {
@@ -271,12 +286,12 @@ export function createMemoryBackend(options: MemoryBackendOptions = {}): Backend
       };
     },
     async openStorage(lease): Promise<Storage> {
-      const h = head(lease.ns);
-      fence(h, lease);
+      const namespaceHead = head(lease.ns);
+      fence(namespaceHead, lease);
       const gate = new Mutex();
-      let nextSeq = h.nextSeq,
-        state: "open" | "closed" | "failed" = "open",
-        closing: Promise<void> | undefined;
+      let nextSeq = namespaceHead.nextSeq;
+      let state: "open" | "closed" | "failed" = "open";
+      let closing: Promise<void> | undefined;
       function run<T>(fn: () => T | Promise<T>): Promise<T> {
         if (state !== "open") return Promise.reject(new Error(`MemoryStorage handle is ${state}`));
         return gate.run(async () => {
@@ -286,7 +301,7 @@ export function createMemoryBackend(options: MemoryBackendOptions = {}): Backend
       }
       function checkFence(): void {
         try {
-          fence(h, lease, nextSeq);
+          fence(namespaceHead, lease, nextSeq);
         } catch (error) {
           state = "failed";
           throw error;
@@ -311,10 +326,10 @@ export function createMemoryBackend(options: MemoryBackendOptions = {}): Backend
         return run(() => {
           checkFence();
           check(Number.isSafeInteger(nextSeq), "Commit sequence space is exhausted");
-          const prepared = h.engine.prepareCommit(frozen, seqFromNumber(nextSeq));
+          const prepared = namespaceHead.engine.prepareCommit(frozen, seqFromNumber(nextSeq));
           const seq = prepared.apply();
-          updateWork(h, frozen);
-          h.nextSeq++;
+          updateWork(namespaceHead, frozen);
+          namespaceHead.nextSeq++;
           nextSeq++;
           return seq;
         });
@@ -323,7 +338,7 @@ export function createMemoryBackend(options: MemoryBackendOptions = {}): Backend
         run(() => {
           checkFence();
           // Pi allocates synchronously in this turn and rejects exhaustion without wrapping.
-          return h.engine.mintId<I>();
+          return namespaceHead.engine.mintId<I>();
         });
       const close: Storage["close"] = () => {
         if (!closing) {
@@ -332,7 +347,8 @@ export function createMemoryBackend(options: MemoryBackendOptions = {}): Backend
         }
         return closing;
       };
-      // Only public Pi read capabilities escape, never its backing state, allocator or close.
+      // The asserted empty proxy target is deliberate: only allowlisted Pi capabilities escape,
+      // never the backing engine, allocator or close implementation.
       const reads = new Set<keyof Storage>([
         "conversation",
         "scanConversations",
@@ -358,7 +374,13 @@ export function createMemoryBackend(options: MemoryBackendOptions = {}): Backend
           return (...args: unknown[]) => {
             try {
               const detached = readArguments(key as keyof Storage, args);
-              return run(() => Reflect.apply(Reflect.get(h.engine, key), h.engine, detached));
+              return run(() =>
+                Reflect.apply(
+                  Reflect.get(namespaceHead.engine, key),
+                  namespaceHead.engine,
+                  detached,
+                ),
+              );
             } catch (error) {
               return Promise.reject(error);
             }

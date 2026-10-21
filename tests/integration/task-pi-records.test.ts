@@ -14,11 +14,13 @@ import { context, dataEntry, deferred, historyFixture, memoryObjects } from "./h
 import { task, taskId } from "./task-support.ts";
 
 it("rejects a real public JS-style Pi task's string error before SQL, preserving readable neighbours", async () => {
-  const captured: Extract<StorageWrite, { type: "task" }>[] = [];
+  const captured: Array<Extract<StorageWrite, { type: "task" }>> = [];
   class CaptureStorage extends MemoryStorage {
     override async commit(writes: readonly StorageWrite[], ctx: Context) {
       const seq = await super.commit(writes, ctx);
-      for (const write of writes) if (write.type === "task") captured.push(structuredClone(write));
+      for (const write of writes) {
+        if (write.type === "task") captured.push(structuredClone(write));
+      }
       return seq;
     }
   }
@@ -97,11 +99,11 @@ for (const { label, version, now, input } of [
   { label: "negative version", version: -1, now: 123, input: null },
   { label: "fractional clock", version: 1, now: 123.5, input: null },
   { label: "negative clock", version: 1, now: -123.5, input: null },
-])
+]) {
   it(`replays real Pi completing/terminal records with ${label} through SQL without changing their shape`, async () => {
     const releaseChild = deferred();
     const completing = deferred();
-    const captured: Extract<StorageWrite, { type: "task" }>[] = [];
+    const captured: Array<Extract<StorageWrite, { type: "task" }>> = [];
     class CaptureStorage extends MemoryStorage {
       override async commit(writes: readonly StorageWrite[], ctx: Context) {
         const seq = await super.commit(writes, ctx);
@@ -171,7 +173,7 @@ for (const { label, version, now, input } of [
       await Promise.race([
         completing.promise,
         settled.then(() => {
-          throw Error("Parent settled without the expected completing state");
+          throw new Error("Parent settled without the expected completing state");
         }),
       ]);
       releaseChild.resolve();
@@ -206,3 +208,4 @@ for (const { label, version, now, input } of [
       await harness.close(context);
     }
   });
+}

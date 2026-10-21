@@ -11,8 +11,9 @@ it("copied scan and ID helpers preserve public Pi selector/error conventions", (
       order: fallback,
       after: undefined,
     });
-    for (const after of [-1, 0, Number.MAX_SAFE_INTEGER])
+    for (const after of [-1, 0, Number.MAX_SAFE_INTEGER]) {
       expect(scanStart(undefined, { after }, fallback)).toEqual({ order: fallback, after });
+    }
   }
   for (const order of ["ascending", "descending"] as const) {
     expect(scanStart(order, undefined, "ascending")).toEqual({ order, after: undefined });
@@ -22,6 +23,7 @@ it("copied scan and ID helpers preserve public Pi selector/error conventions", (
   expect(() => scanStart("ascending", { after: 1, order: "descending" }, "ascending")).toThrow(
     "The cursor continues a descending scan; the query asks for ascending",
   );
-  for (const cursor of [{}, { after: 1.5 }, { after: Infinity }, { after: 1, order: "invalid" }])
+  for (const cursor of [{}, { after: 1.5 }, { after: Infinity }, { after: 1, order: "invalid" }]) {
     expect(() => scanStart(undefined, cursor, "ascending")).toThrow(StorageRequestError);
+  }
 });

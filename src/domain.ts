@@ -1,7 +1,9 @@
 import { createHash, randomUUID } from "node:crypto";
 
+/** Validated namespace identity; all receipts, leases, and stored history are scoped by it. */
 export type HarnessId = string & { readonly __harness: unique symbol };
 
+/** Caller-chosen idempotency key within a Harness ID; reuse only for equal canonical input. */
 export type RequestId = string & { readonly __request: unique symbol };
 
 export type OwnerToken = string & { readonly __owner: unique symbol };
@@ -37,6 +39,7 @@ export function integer(value: unknown): number {
   return n;
 }
 
+/** Validates namespace syntax without checking that the namespace exists. */
 export function harnessId(value: unknown): HarnessId {
   const s = text(value);
 
@@ -45,6 +48,7 @@ export function harnessId(value: unknown): HarnessId {
   return s as HarnessId;
 }
 
+/** Validates key syntax without looking up or reserving a receipt. */
 export function requestId(value: unknown): RequestId {
   const s = text(value);
 
@@ -90,8 +94,9 @@ export class Mutex {
   }
 }
 
-export const sleep = (ms: number): Promise<void> =>
-  new Promise((resolve) => setTimeout(resolve, ms));
+export function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
 export function errorCode(error: unknown): string | undefined {
   if (typeof error !== "object" || error === null || !("code" in error)) return undefined;

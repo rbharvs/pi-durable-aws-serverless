@@ -45,10 +45,12 @@ it("rejects four tiny commands copying 12 MiB each before any upload or write tr
     expect(f.memory.operations.filter((op) => op.operation === "GET").length).toBeLessThan(4);
     expect(await f.storage.commit(copies.slice(0, 2), context)).toBe(2);
     const cold = await f.cold();
-    for (const id of [20, 30, 31])
+    for (const id of [20, 30, 31]) {
       expect((await cold.document(documentId(id), "current", context))?.value).toEqual(value);
-    for (const id of [32, 33])
+    }
+    for (const id of [32, 33]) {
       expect(await cold.document(documentId(id), "current", context)).toBeUndefined();
+    }
   } finally {
     await f.finish();
   }

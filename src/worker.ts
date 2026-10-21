@@ -8,6 +8,10 @@ import type { WorkerAuthority, Received } from "./authority.ts";
 import type { AgentInput } from "./input.ts";
 import type { Events } from "./dispatch.ts";
 
+/**
+ * Closes opened Harness/Storage before release and the authority handle afterward in finally,
+ * including when release is skipped.
+ */
 export interface WorkerDependencies {
   /** Returns a handle owned and closed by this invocation. */
   connectAuthority(): Promise<WorkerAuthority>;
@@ -101,7 +105,9 @@ export async function worker(
   remaining: () => number,
   deps: WorkerDependencies,
 ): Promise<WorkerResult> {
-  const event: Events = (name, fields) => deps.event(name, fields);
+  const event: Events = (name, fields) => {
+    deps.event(name, fields);
+  };
   const control = await deps.connectAuthority();
 
   try {

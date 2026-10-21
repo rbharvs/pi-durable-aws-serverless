@@ -68,7 +68,7 @@ const helloJson = '{"content":"hello","whenBusy":"followUp"}';
 const oversized = canonical({ content: "x".repeat(MAX_INLINE_INPUT_BYTES), whenBusy: "followUp" });
 
 /** Inputs a raw caller could pass by bypassing types; each must fail before any SQL. */
-const invalidReceives: { name: string; ns?: HarnessId; accepted: AcceptedInput }[] = [
+const invalidReceives: Array<{ name: string; ns?: HarnessId; accepted: AcceptedInput }> = [
   { name: "canonical-hash", accepted: { ...hello, hash: computeSha256("different input") } },
   {
     name: "noncanonical-json",
@@ -100,7 +100,7 @@ const invalidReceives: { name: string; ns?: HarnessId; accepted: AcceptedInput }
   { name: "invalid-namespace", ns: "bad/namespace" as HarnessId, accepted: hello },
 ];
 
-for (const { name, ns, accepted } of invalidReceives)
+for (const { name, ns, accepted } of invalidReceives) {
   it(`raw receive rejects ${name} before any SQL or receipt exists`, async () => {
     const store = await namespace("raw_invalid");
     const { authority, trace } = await traced();
@@ -114,6 +114,7 @@ for (const { name, ns, accepted } of invalidReceives)
       await store.finish();
     }
   });
+}
 
 it("receive detaches caller-owned input before its first await", async () => {
   const store = await namespace("detach");
@@ -166,7 +167,7 @@ it("a confirmed INSERT abort re-reads authority before repeating the insert", as
   }
 });
 
-for (const winner of ["identical", "different"] as const)
+for (const winner of ["identical", "different"] as const) {
   it(`the re-read after a confirmed abort observes a concurrent ${winner} winner`, async () => {
     const store = await namespace("abort_winner");
     const other = acceptedInput({ content: "concurrent winner", whenBusy: "followUp" });
@@ -196,6 +197,7 @@ for (const winner of ["identical", "different"] as const)
       await store.finish();
     }
   });
+}
 
 it("persistent confirmed aborts stop after three re-read attempts without a receipt", async () => {
   const store = await namespace("abort_bound");
@@ -227,7 +229,7 @@ for (const [stage, prefix] of [
   ["namespace insert", "INSERT INTO harness"],
   ["receipt read", "SELECT * FROM inbox"],
   ["receipt insert", "INSERT INTO inbox"],
-] as const)
+] as const) {
   it(`a ${stage} abort storm stops at three attempts, not nested retry budgets`, async () => {
     const store = await namespace("receive_stage_storm");
     const causes: Error[] = [];
@@ -251,9 +253,9 @@ for (const [stage, prefix] of [
       expect(
         await store.authority.inspectionDb.query("SELECT * FROM harness WHERE ns=$1", [store.ns]),
       ).toHaveLength(stage.startsWith("namespace") ? 0 : 1);
-      if (stage.startsWith("namespace"))
+      if (stage.startsWith("namespace")) {
         expect(trace.filter((q) => q.sql.includes("inbox"))).toEqual([]);
-      else {
+      } else {
         const firstReceipt = trace.findIndex((q) => q.sql.startsWith("SELECT * FROM inbox"));
 
         expect(firstReceipt).toBeGreaterThanOrEqual(0);
@@ -264,9 +266,10 @@ for (const [stage, prefix] of [
       await store.finish();
     }
   });
+}
 
-for (const namespacePrefix of ["SELECT ns FROM harness", "INSERT INTO harness"])
-  for (const receiptPrefix of ["SELECT * FROM inbox", "INSERT INTO inbox"])
+for (const namespacePrefix of ["SELECT ns FROM harness", "INSERT INTO harness"]) {
+  for (const receiptPrefix of ["SELECT * FROM inbox", "INSERT INTO inbox"]) {
     it(`namespace ${namespacePrefix} and receipt ${receiptPrefix} each get their own three-attempt budget`, async () => {
       const store = await namespace("receive_stage_retries");
       let namespaceAttempts = 0;
@@ -307,11 +310,13 @@ for (const namespacePrefix of ["SELECT ns FROM harness", "INSERT INTO harness"])
         await store.finish();
       }
     });
+  }
+}
 
-for (const applied of [false, true])
+for (const applied of [false, true]) {
   it(`an unknown namespace INSERT ACK applied=${applied} stops before receipt admission without retrying`, async () => {
     const store = await namespace("namespace_unknown");
-    const cause = Error("unknown namespace insert acknowledgement");
+    const cause = new Error("unknown namespace insert acknowledgement");
     const { authority, trace } = await traced(
       faultOnce(applied ? "after" : "before", "INSERT INTO harness", () => cause),
     );
@@ -335,14 +340,15 @@ for (const applied of [false, true])
       await store.finish();
     }
   });
+}
 
 for (const [insertPrefix, readPrefix] of [
   ["INSERT INTO harness", "SELECT ns FROM harness"],
   ["INSERT INTO inbox", "SELECT * FROM inbox"],
-] as const)
+] as const) {
   it(`${insertPrefix} preserves the raw 23505 when the winner re-read is empty, without retrying`, async () => {
     const store = await namespace("missing_unique_winner");
-    const cause = Object.assign(Error("unique violation without a visible winner"), {
+    const cause = Object.assign(new Error("unique violation without a visible winner"), {
       code: "23505",
     });
     const { authority, trace } = await traced(faultOnce("before", insertPrefix, () => cause));
@@ -357,20 +363,24 @@ for (const [insertPrefix, readPrefix] of [
       expect(
         await store.authority.inspectionDb.query("SELECT ns FROM harness WHERE ns=$1", [store.ns]),
       ).toEqual(insertPrefix === "INSERT INTO harness" ? [] : [{ ns: store.ns }]);
-      if (insertPrefix === "INSERT INTO harness")
+      if (insertPrefix === "INSERT INTO harness") {
         expect(trace.filter((q) => q.sql.includes("inbox"))).toEqual([]);
+      }
     } finally {
       await authority.close();
       await store.finish();
     }
   });
+}
 
-for (const applied of [true, false])
+for (const applied of [true, false]) {
   it(`an unknown INSERT outcome (applied=${applied}) is never retried and never asserts non-acceptance`, async () => {
     const store = await namespace("unknown_insert");
     const { authority, trace } = await traced(
-      faultOnce(applied ? "after" : "before", "INSERT INTO inbox", () =>
-        Error("unknown insert acknowledgement"),
+      faultOnce(
+        applied ? "after" : "before",
+        "INSERT INTO inbox",
+        () => new Error("unknown insert acknowledgement"),
       ),
     );
 
@@ -390,13 +400,14 @@ for (const applied of [true, false])
       await store.finish();
     }
   });
+}
 
 const corruptions = [
   ["noncanonical json", "json=' '||json"],
   ["hash mismatch", `payload_sha256='${computeSha256("other")}'`],
 ] as const;
 
-for (const [name, assignment] of corruptions)
+for (const [name, assignment] of corruptions) {
   it(`rejects a stored receipt with ${name} on read and never treats it as a duplicate`, async () => {
     const store = await namespace("corrupt");
 
@@ -419,6 +430,7 @@ for (const [name, assignment] of corruptions)
       await store.finish();
     }
   });
+}
 
 it("close ends only this handle; the immutable receipt survives for a fresh connection", async () => {
   const store = await namespace("close_reopen");

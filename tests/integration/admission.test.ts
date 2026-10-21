@@ -40,7 +40,7 @@ const connectTracedAuthority = (hook: QueryHook, trace: Query[]) => async () =>
 /** A submit handler over real PostgreSQL that records wakes, events, and reports. */
 function submitApi(overrides: Partial<ApiDependencies> = {}) {
   const wakes: string[] = [];
-  const events: Record<string, unknown>[] = [];
+  const events: Array<Record<string, unknown>> = [];
   const reports: unknown[] = [];
   const run = apiHandler({
     connectAuthority: connectSqlAuthority,
@@ -59,7 +59,7 @@ function submitApi(overrides: Partial<ApiDependencies> = {}) {
 
 /** Returns `receivedAt` from a success response, or fails the test. */
 function receivedAtOf(response: SubmitResponse): number {
-  if (!response.ok) throw Error(`Expected acceptance, got ${response.code}`);
+  if (!response.ok) throw new Error(`Expected acceptance, got ${response.code}`);
 
   return response.receivedAt;
 }
@@ -68,13 +68,14 @@ function receivedAtOf(response: SubmitResponse): number {
 function failingClose(client: pg.Client, closes: { count: number }): pg.Client {
   return new Proxy(client, {
     get(target, prop) {
-      if (prop === "end")
+      if (prop === "end") {
         return async () => {
           closes.count++;
           await target.end();
 
-          throw Error("close acknowledgement failed");
+          throw new Error("close acknowledgement failed");
         };
+      }
 
       const value: unknown = Reflect.get(target, prop);
 
@@ -142,7 +143,7 @@ it("acknowledges an immutable canonical receipt that a fresh connection reads af
       { ...input, content: [...input.content].reverse() },
       { ...input, content: [{ type: "text", text: "a", textSignature: "other" }, image] },
       { ...input, content: [{ type: "text", text: "a" }, image] },
-    ])
+    ]) {
       expect(
         await api.run({ ns: store.ns, request: "one", command: inlineCommand(changed) }),
       ).toEqual({
@@ -150,6 +151,7 @@ it("acknowledges an immutable canonical receipt that a fresh connection reads af
         code: "request-conflict",
         retryable: false,
       });
+    }
 
     expect(await store.inbox()).toEqual(before);
     expect(before).toHaveLength(1);
@@ -216,12 +218,13 @@ it("rejects invalid input without acquiring a connection or creating state", asy
       inlineCommand({ ...plain, content: sparse }),
       inlineCommand({ ...plain, content: sparseWithText }),
       { ...inlineCommand(plain), extra: true },
-    ])
+    ]) {
       expect(await api.run({ ns: store.ns, request: "bad", command })).toEqual({
         ok: false,
         code: "invalid-input",
         retryable: false,
       });
+    }
 
     expect(
       await api.run({ ns: "bad/path", request: "bad", command: inlineCommand(plain) }),
@@ -319,14 +322,16 @@ it("a confirmed INSERT abort is re-read and then acknowledged once", async () =>
   }
 });
 
-for (const applied of [true, false])
+for (const applied of [true, false]) {
   it(`a lost receipt acknowledgement (applied=${applied}) is reported as unknown, never as rejection`, async () => {
     const store = await namespace("api_lost_ack");
     const trace: Query[] = [];
     const lossy = submitApi({
       connectAuthority: connectTracedAuthority(
-        faultOnce(applied ? "after" : "before", "INSERT INTO inbox", () =>
-          Error("lost receipt acknowledgement"),
+        faultOnce(
+          applied ? "after" : "before",
+          "INSERT INTO inbox",
+          () => new Error("lost receipt acknowledgement"),
         ),
         trace,
       ),
@@ -355,13 +360,14 @@ for (const applied of [true, false])
       await store.finish();
     }
   });
+}
 
 it("a receipt-read fault is unavailable and never writes", async () => {
   const store = await namespace("api_read_fault");
   const trace: Query[] = [];
   const api = submitApi({
     connectAuthority: connectTracedAuthority(
-      faultOnce("before", "SELECT * FROM inbox", () => Error("SELECT private read failed")),
+      faultOnce("before", "SELECT * FROM inbox", () => new Error("SELECT private read failed")),
       trace,
     ),
   });
@@ -385,7 +391,7 @@ it("a receipt-read fault is unavailable and never writes", async () => {
   }
 });
 
-for (const winner of ["identical", "different"] as const)
+for (const winner of ["identical", "different"] as const) {
   it(`an INSERT race with a ${winner} winner returns the winner's outcome`, async () => {
     const store = await namespace("api_insert_race");
     const trace: Query[] = [];
@@ -413,9 +419,9 @@ for (const winner of ["identical", "different"] as const)
         command: inlineCommand(plain),
       });
 
-      if (winner === "identical")
+      if (winner === "identical") {
         expect(response).toEqual({ ok: true, duplicate: true, receivedAt: winnerTime });
-      else expect(response).toEqual({ ok: false, code: "request-conflict", retryable: false });
+      } else expect(response).toEqual({ ok: false, code: "request-conflict", retryable: false });
       expect(statements(trace, "INSERT INTO inbox")).toHaveLength(1);
       expect(raced).toBe(true);
       expect(api.wakes).toEqual(winner === "identical" ? [store.ns] : []);
@@ -426,6 +432,7 @@ for (const winner of ["identical", "different"] as const)
       await store.finish();
     }
   });
+}
 
 it("a failed wake does not undo the durable acknowledgement", async () => {
   const store = await namespace("api_failed_wake");
@@ -435,7 +442,7 @@ it("a failed wake does not undo the durable acknowledgement", async () => {
       wake: async (ns) => {
         observed = await store.authority.get(ns, requestId("one"));
 
-        throw Error("missing wake");
+        throw new Error("missing wake");
       },
     },
   });
@@ -469,14 +476,14 @@ it("a known receipt survives wake, observer, report and close failures with the 
     },
     dispatch: {
       wake: async () => {
-        throw Error("wake");
+        throw new Error("wake");
       },
     },
     event: () => {
-      throw Error("observer");
+      throw new Error("observer");
     },
     report: () => {
-      throw Error("report");
+      throw new Error("report");
     },
   });
 
@@ -502,7 +509,11 @@ it("an unknown outcome stays unavailable when cleanup fails, and cleanup is repo
     connectAuthority: async () => {
       const client = wrap(
         await provider.connect(),
-        faultOnce("after", "INSERT INTO inbox", () => Error("SELECT private lost acknowledgement")),
+        faultOnce(
+          "after",
+          "INSERT INTO inbox",
+          () => new Error("SELECT private lost acknowledgement"),
+        ),
       );
 
       return new SqlAuthority(new Database(failingClose(client, closes)), provider);
@@ -547,7 +558,7 @@ it("a real connection acquisition failure is unavailable and keeps provider deta
 it("reports unavailable with the original cause when a unique violation has no visible winner", async () => {
   const store = await namespace("missing_winner");
   const trace: Query[] = [];
-  const original = Object.assign(Error("injected unique violation without a visible winner"), {
+  const original = Object.assign(new Error("injected unique violation without a visible winner"), {
     code: "23505",
   });
   const api = submitApi({

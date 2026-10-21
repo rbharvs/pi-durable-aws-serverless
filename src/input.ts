@@ -22,11 +22,13 @@ export const MAX_BLOCKS = 64;
 
 export const MAX_IMAGES = 8;
 
+/** Validated Pi content and the admission policy to use while the agent is busy. */
 export type AgentInput = {
   readonly content: UserInput;
   readonly whenBusy: "steer" | "followUp";
 };
 
+/** Namespace-scoped staging key; unlike a published key, the caller may still mutate its bytes. */
 export type StagedKey = string & { readonly __stagedKey: unique symbol };
 
 /** Integrity of raw uploaded bytes, not the canonical input identity. */
@@ -36,6 +38,7 @@ export type StagedReference = {
   readonly bytes: number;
 };
 
+/** Inline logical input or a reference to raw staging bytes that must still be read and verified. */
 export type Command =
   | { readonly kind: "inline"; readonly input: AgentInput }
   | ({ readonly kind: "s3" } & StagedReference);
@@ -72,6 +75,10 @@ function assertOnlyFields(record: Record<string, unknown>, allowed: readonly str
   );
 }
 
+/**
+ * Validates the namespace-scoped key, SHA-256 syntax, and declared byte bound without I/O.
+ * Does not prove object existence or integrity; submission checks the fetched raw bytes.
+ */
 export function stagedReference(ns: HarnessId, value: unknown): StagedReference {
   const record = object(value);
   const key = text(record.key);

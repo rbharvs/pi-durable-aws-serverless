@@ -56,6 +56,7 @@ export async function readAtMost(
 /** History uploads are joined even when one worker fails; output retains input order. */
 export const UPLOAD_CONCURRENCY = 4;
 
+/** Stops assigning work after a failure, joins every started upload, and preserves result order. */
 export async function uploadValues<T>(
   values: readonly T[],
   upload: (value: T, index: number) => Promise<PublishedPayload>,
@@ -76,6 +77,8 @@ export async function uploadValues<T>(
       }
     }),
   );
-  for (const result of results) if (result.status === "rejected") throw result.reason;
+  for (const result of results) {
+    if (result.status === "rejected") throw result.reason;
+  }
   return output;
 }

@@ -41,8 +41,9 @@ async function project(run: (directory: string) => Promise<void>) {
       "package.json",
       "pnpm-lock.yaml",
       "tsconfig.json",
-    ])
+    ]) {
       await cp(resolve(path), join(directory, path), { recursive: true });
+    }
     await symlink(resolve("node_modules"), join(directory, "node_modules"), "dir");
     await run(directory);
   } finally {
@@ -160,7 +161,7 @@ it("normal builds do not execute operator code or certify handler behavior", asy
   });
 });
 
-for (const kind of ["entry", "metadata", "symlink", "transitive"] as const)
+for (const kind of ["entry", "metadata", "symlink", "transitive"] as const) {
   it(`build rejects ${kind} input/output collision without changing authored input`, async () => {
     await project(async (directory) => {
       await mkdir(join(directory, "dist"));
@@ -187,6 +188,7 @@ for (const kind of ["entry", "metadata", "symlink", "transitive"] as const)
       expect(await readdir(join(directory, "dist"))).toEqual([path.slice(5)]);
     });
   });
+}
 
 it("build output replacement preserves an authored hard-link alias", async () => {
   await project(async (directory) => {

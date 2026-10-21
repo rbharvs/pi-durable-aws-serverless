@@ -10,7 +10,9 @@ afterEach(() => vi.restoreAllMocks());
 
 it("worker root does not serialize a provider's arbitrary error name", async () => {
   const backend = createMemoryBackend();
-  const error = Object.assign(Error("private SQL password"), { name: "private-provider-token" });
+  const error = Object.assign(new Error("private SQL password"), {
+    name: "private-provider-token",
+  });
   const log = vi.spyOn(console, "log").mockImplementation(() => {});
   const handler = createHandler(() => ({
     async connectAuthority() {
@@ -21,10 +23,10 @@ it("worker root does not serialize a provider's arbitrary error name", async () 
       return a;
     },
     async open() {
-      throw Error("must not open");
+      throw new Error("must not open");
     },
     async resolve() {
-      throw Error("must not resolve");
+      throw new Error("must not resolve");
     },
     event: logger("worker", lambdaContext),
   }));
@@ -53,11 +55,11 @@ it("DSQL socket diagnostics use a fixed value and cannot throw from a broken log
     aws,
   ).connect();
   try {
-    const error = Object.assign(Error("private password"), { name: "private-token" });
+    const error = Object.assign(new Error("private password"), { name: "private-token" });
     client.emit("error", error);
     expect(log.mock.calls).toEqual([["pg-socket", "Error"]]);
     log.mockImplementation(() => {
-      throw Error("broken logger");
+      throw new Error("broken logger");
     });
     expect(() => client.emit("error", error)).not.toThrow();
   } finally {

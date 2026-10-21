@@ -35,8 +35,9 @@ export function createSqlBackend(
               errors.push(error);
             }
             if (errors.length === 1) throw errors[0];
-            if (errors.length > 1)
+            if (errors.length > 1) {
               throw new AggregateError(errors, "Storage cleanup failed", { cause: errors[0] });
+            }
           })());
         return storage;
       } catch (error) {
@@ -51,10 +52,11 @@ export function createSqlBackend(
         } catch (failure) {
           errors.push(failure);
         }
-        if (errors.length > 1)
+        if (errors.length > 1) {
           throw new AggregateError(errors, "Storage acquisition and cleanup failed", {
             cause: error,
           });
+        }
         throw error;
       }
     },

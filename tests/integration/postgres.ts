@@ -14,17 +14,17 @@ export type QueryHook = (
   rows?: Row[],
 ) => Promise<void>;
 
-export type Query = {
+export interface Query {
   sql: string;
   params: readonly SqlValue[];
   acknowledged: boolean;
   error?: unknown;
-};
+}
 
 export function wrap(client: pg.Client, hook: QueryHook, trace: Query[] = []): pg.Client {
   return new Proxy(client, {
     get(target, prop) {
-      if (prop === "query")
+      if (prop === "query") {
         return async (sql: string, params: SqlValue[] = []) => {
           const query: Query = { sql, params: structuredClone(params), acknowledged: false };
 
@@ -45,6 +45,7 @@ export function wrap(client: pg.Client, hook: QueryHook, trace: Query[] = []): p
             throw error;
           }
         };
+      }
 
       const value: unknown = Reflect.get(target, prop);
 
@@ -127,10 +128,11 @@ export async function namespace(label: string) {
     async finish() {
       try {
         // Fixed table names and the full random namespace prefix: never clean another test's rows.
-        for (const table of OWNED_TABLES)
+        for (const table of OWNED_TABLES) {
           await authority.inspectionDb.query(`DELETE FROM ${table} WHERE starts_with(ns, $1)`, [
             ns,
           ]);
+        }
       } finally {
         await authority.close();
       }

@@ -18,7 +18,7 @@ for (const [name, changes] of [
   ["canonical overflow", { bytes: MAX_INPUT_BYTES + 1 }],
   ["string byte count", { bytes: String(input.bytes) }],
   ["fractional byte count", { bytes: input.bytes + 0.5 }],
-] as const)
+] as const) {
   it(`raw authority rejects ${name} before SQL`, async () => {
     const store = await namespace("object_reject");
     const fixture = objectFixture();
@@ -38,6 +38,7 @@ for (const [name, changes] of [
       await store.finish();
     }
   });
+}
 
 it("raw authority snapshots object identity before awaits and reads the kind only once", async () => {
   const store = await namespace("object_snapshot");
@@ -74,7 +75,7 @@ for (const [name, assignment] of [
   ["staging key", "object_key='in/foreign/input'"],
   ["invalid key shape", "object_key='p/bad'"],
   ["invalid digest", "payload_sha256='BAD'"],
-] as const)
+] as const) {
   it(`rejects stored object metadata with ${name} on reads and duplicate attempts`, async () => {
     const store = await namespace("object_corrupt");
     const fixture = objectFixture();
@@ -97,6 +98,7 @@ for (const [name, assignment] of [
       await store.finish();
     }
   });
+}
 
 it("SQL rejects incoherent object/inline unions and enforces canonical object bounds", async () => {
   const store = await namespace("object_constraints");

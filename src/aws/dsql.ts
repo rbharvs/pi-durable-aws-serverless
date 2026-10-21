@@ -4,7 +4,9 @@ import { connect, schemaIdentifier, type SqlProvider } from "../sql/connection.t
 import { region, type AwsOptions } from "./config.ts";
 
 /** Only the SQLSTATE confirms an aborted transaction; an OC000 message is not enough. */
-export const isDsqlAbort = (error: unknown): boolean => errorCode(error) === "40001";
+export function isDsqlAbort(error: unknown): boolean {
+  return errorCode(error) === "40001";
+}
 
 export function dsqlSigner(host: string, options: AwsOptions): DsqlSigner {
   const configuredRegion = region(options.region);

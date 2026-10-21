@@ -10,7 +10,7 @@ import {
 } from "./history-support.ts";
 import { documentCreate, documentId } from "./document-support.ts";
 
-for (const mismatch of ["history", "fork", "key"] as const)
+for (const mismatch of ["history", "fork", "key"] as const) {
   it(`rejects copy ${mismatch} incoherence without another address or shape conflict`, async () => {
     const f = await historyFixture("copy_coherence");
     try {
@@ -57,8 +57,9 @@ for (const mismatch of ["history", "fork", "key"] as const)
       await f.finish();
     }
   });
+}
 
-for (const command of ["document.change", "document.retire"] as const)
+for (const command of ["document.change", "document.retire"] as const) {
   it(`rejects ${command} on an already retired incarnation, retaining its original lifetime and history`, async () => {
     const f = await historyFixture("retired_command");
     try {
@@ -85,6 +86,7 @@ for (const command of ["document.change", "document.retire"] as const)
       await f.finish();
     }
   });
+}
 
 it("an empty create-retire lifetime cannot free an address occupied by another incarnation", async () => {
   const f = await historyFixture("empty_lifetime_conflict", { objects: memoryObjects });
@@ -172,8 +174,8 @@ it("rejects raw document write before SQL or object I/O and keeps valid document
   }
 });
 
-for (const command of ["document.create", "document.copy"] as const)
-  for (const field of ["createdAt", "retiredAt"] as const)
+for (const command of ["document.create", "document.copy"] as const) {
+  for (const field of ["createdAt", "retiredAt"] as const) {
     it(`rejects caller-supplied ${field} on ${command} before I/O`, async () => {
       const f = await historyFixture("caller_lifetime");
       try {
@@ -198,6 +200,8 @@ for (const command of ["document.create", "document.copy"] as const)
         await f.finish();
       }
     });
+  }
+}
 
 it("a same-batch change keeps its incarnation current, so a create at its address is rejected", async () => {
   const f = await historyFixture("changed_occupant");
@@ -212,10 +216,11 @@ it("a same-batch change keeps its incarnation current, so a create at its addres
       },
       documentCreate(21),
     ];
-    for (const batch of [writes, [...writes].reverse()])
+    for (const batch of [writes, [...writes].reverse()]) {
       await expect(f.storage.commit(batch, context)).rejects.toThrow(
         "address already has a current incarnation",
       );
+    }
     expect(await f.snapshot()).toEqual(before);
   } finally {
     await f.finish();

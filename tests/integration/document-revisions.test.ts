@@ -17,7 +17,7 @@ for (const corruption of [
   "delta value",
   "delta version",
   "missing base",
-] as const)
+] as const) {
   it(`rejects corrupt revision ${corruption} rather than returning absence or a partial value`, async () => {
     const f = await historyFixture("revision_corrupt");
     try {
@@ -32,17 +32,17 @@ for (const corruption of [
         ],
         context,
       );
-      if (corruption === "base version" || corruption === "delta version")
+      if (corruption === "base version" || corruption === "delta version") {
         await f.control.query("UPDATE revisions SET version=$2 WHERE ns=$1 AND kind=$3", [
           f.ns,
           corruption === "base version" ? "NaN" : "2",
           corruption === "base version" ? "base" : "delta",
         ]);
-      else if (corruption === "missing base")
+      } else if (corruption === "missing base") {
         await f.control.query("UPDATE revisions SET kind='delta' WHERE ns=$1 AND kind='base'", [
           f.ns,
         ]);
-      else
+      } else {
         await f.control.query(
           "UPDATE inline_payloads SET json=$2 WHERE ns=$1 AND payload_ref=(SELECT payload_ref FROM revisions WHERE ns=$1 AND kind=$3)",
           [
@@ -51,6 +51,7 @@ for (const corruption of [
             corruption === "base value" ? "base" : "delta",
           ],
         );
+      }
       const cold = await f.cold();
       await expect(cold.document(documentId(20), "current", context)).rejects.toBeInstanceOf(
         PayloadCorrupt,
@@ -59,6 +60,7 @@ for (const corruption of [
       await f.finish();
     }
   });
+}
 
 it("reads only the selected checkpoint and its tail while retaining older object revisions", async () => {
   const f = await historyFixture("revision_projection", { objects: memoryObjects });
@@ -152,7 +154,7 @@ for (const invalid of [
   { type: "document.change", id: 20, content: { kind: "delta", version: 1, ops: [["bad"]] } },
   { type: "document.copy", record: documentCreate().record, source: { id: 20, at: -1 } },
   { type: "document.retire", id: 0 },
-])
+]) {
   it(`rejects invalid normalized ${JSON.stringify(invalid)} before SQL or object I/O`, async () => {
     const f = await historyFixture("document_invalid", { objects: memoryObjects });
     try {
@@ -168,8 +170,9 @@ for (const invalid of [
       await f.finish();
     }
   });
+}
 
-for (const version of [-1.25, 0, 2.5])
+for (const version of [-1.25, 0, 2.5]) {
   it(`round-trips raw public StorageWrite version ${version} like MemoryStorage, without imposing defineDoc policy`, async () => {
     const f = await historyFixture("document_raw_version");
     const memory = new MemoryStorage();
@@ -196,3 +199,4 @@ for (const version of [-1.25, 0, 2.5])
       await f.finish();
     }
   });
+}

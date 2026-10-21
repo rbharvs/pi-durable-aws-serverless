@@ -7,7 +7,7 @@ export function registerConformance(
   name: string,
   make: () => Promise<{ openStorage(): Promise<Storage>; finish(): Promise<void> }>,
 ) {
-  for (const reopen of [false, true])
+  for (const reopen of [false, true]) {
     registerStorageConformance(
       { describe, it, expect },
       `${name} upstream${reopen ? "/reopen-every-commit" : "/live"}`,
@@ -22,13 +22,14 @@ export function registerConformance(
             : new Proxy<Storage>(current, {
                 get(_target, key) {
                   if (key === "then") return undefined;
-                  if (key === "close")
+                  if (key === "close") {
                     return async () => {
                       closed = true;
                       await current.close(context);
                     };
-                  if (closed) return () => Promise.reject(Error("Storage wrapper closed"));
-                  if (key === "commit")
+                  }
+                  if (closed) return () => Promise.reject(new Error("Storage wrapper closed"));
+                  if (key === "commit") {
                     return async (...args: Parameters<Storage["commit"]>) => {
                       try {
                         return await current.commit(...args);
@@ -37,6 +38,7 @@ export function registerConformance(
                         if (!closed) current = await f.openStorage();
                       }
                     };
+                  }
                   return (...args: unknown[]) =>
                     Reflect.apply(Reflect.get(current, key), current, args);
                 },
@@ -48,4 +50,5 @@ export function registerConformance(
         }
       },
     );
+  }
 }

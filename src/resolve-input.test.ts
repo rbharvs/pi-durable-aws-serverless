@@ -20,7 +20,7 @@ it("resolves canonical inline input without reading an object", async () => {
   await expect(
     resolveInput(receipt(input.json), {
       get: async () => {
-        throw Error("unexpected object read");
+        throw new Error("unexpected object read");
       },
     }),
   ).resolves.toEqual(input.input);
@@ -33,16 +33,17 @@ for (const [label, json] of [
     "oversize input",
     JSON.stringify({ content: "x".repeat(MAX_INPUT_BYTES), whenBusy: "followUp" }),
   ],
-] as const)
+] as const) {
   it(`rejects ${label} even with a matching receipt digest`, async () => {
     await expect(
       resolveInput(receipt(json), {
         get: async () => {
-          throw Error("unexpected read");
+          throw new Error("unexpected read");
         },
       }),
     ).rejects.toThrow();
   });
+}
 
 it("rejects inline content whose receipt digest differs", async () => {
   const input = canonical({ content: "hello", whenBusy: "followUp" });
@@ -51,10 +52,10 @@ it("rejects inline content whose receipt digest differs", async () => {
   ).rejects.toThrow("Inbox payload integrity");
 });
 
-for (const forged of ["namespace", "key", "bytes"] as const)
+for (const forged of ["namespace", "key", "bytes"] as const) {
   it(`rejects forged published ${forged} from a custom authority before object I/O`, async () => {
-    const f = objectFixture(),
-      store = f.objects(ns);
+    const f = objectFixture();
+    const store = f.objects(ns);
     const input = canonical({ content: "x".repeat(300000), whenBusy: "followUp" });
     let reads = 0;
     try {
@@ -85,10 +86,11 @@ for (const forged of ["namespace", "key", "bytes"] as const)
       store.close();
     }
   });
+}
 
 it("checks durable object bytes against both receipt and publication identities", async () => {
-  const f = objectFixture(),
-    store = f.objects(ns);
+  const f = objectFixture();
+  const store = f.objects(ns);
   const input = canonical({ content: "x".repeat(300000), whenBusy: "followUp" });
   try {
     const payload = await store.put(input.json);

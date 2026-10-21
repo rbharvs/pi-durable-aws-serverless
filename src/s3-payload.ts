@@ -14,15 +14,16 @@ export interface PayloadObjects {
 export function objectSize(json: string): number {
   const bytes = Buffer.byteLength(json);
 
-  if (bytes > LIMITS.maxObjectBytes)
+  if (bytes > LIMITS.maxObjectBytes) {
     throw new EnvelopeRejected(`Object exceeds ${LIMITS.maxObjectBytes} bytes: ${bytes}`);
+  }
 
   jsonText(json);
   return bytes;
 }
 
 /** Exact metadata width of a future random immutable reference. No upload in planning. */
-export function referenceEstimate(ns: HarnessId, bytes: number): readonly (string | number)[] {
+export function referenceEstimate(ns: HarnessId, bytes: number): ReadonlyArray<string | number> {
   return [`p/${ns}/00000000-0000-4000-8000-000000000000`, "0".repeat(64), bytes];
 }
 

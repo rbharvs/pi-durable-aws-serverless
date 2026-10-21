@@ -3,11 +3,12 @@ import type { Dispatch, Events } from "./dispatch.ts";
 import type { HarnessId } from "./domain.ts";
 import { emit, cleanup } from "./diagnostics.ts";
 
-export type ReconcilerDependencies = {
+/** Fresh authority handles are invocation-owned; dispatch and event sinks remain caller-owned. */
+export interface ReconcilerDependencies {
   connectAuthority(): Promise<ReconcilerAuthority>;
   readonly dispatch: Dispatch;
   readonly event: Events;
-};
+}
 
 /**
  * Discovers one bounded page and attempts each advisory wake after closing authority.
@@ -15,7 +16,9 @@ export type ReconcilerDependencies = {
  * may have been delivered; overlapping invocations may send the same hint.
  */
 export async function reconcile(deps: ReconcilerDependencies): Promise<number> {
-  const event: Events = (name, fields) => deps.event(name, fields);
+  const event: Events = (name, fields) => {
+    deps.event(name, fields);
+  };
   const control = await deps.connectAuthority();
   let eligible: HarnessId[];
   try {

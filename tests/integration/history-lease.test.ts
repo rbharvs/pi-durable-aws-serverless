@@ -21,7 +21,7 @@ it("claim uses a strict database-clock boundary, issues a frozen nominal lease, 
       await f.control.query(`UPDATE harness SET lease_until=${DB_NOW_MS}-1 WHERE ns=$1`, [f.ns]);
       const claim = await f.authority.claim(f.ns, 1234);
       expect(claim.kind).toBe("claimed");
-      if (claim.kind !== "claimed") throw Error("Expired namespace must be claimable");
+      if (claim.kind !== "claimed") throw new Error("Expired namespace must be claimable");
       expect(Object.isFrozen(claim.lease)).toBe(true);
       expect(claim.lease.epoch).toBe(f.lease.epoch + 1);
       expect(claim.lease.owner).not.toBe(f.lease.owner);
@@ -55,14 +55,14 @@ it("receipt ingress never resets or reallocates an existing leased ownership hea
   }
 });
 
-for (const changed of ["owner", "epoch"] as const)
+for (const changed of ["owner", "epoch"] as const) {
   it(`the ${changed} component fences independently of the unchanged sequence and other ownership component`, async () => {
     const f = await historyFixture(`independent_${changed}`);
     try {
       const allocator = await f.open();
-      if (changed === "owner")
+      if (changed === "owner") {
         await f.control.query("UPDATE harness SET owner=$2 WHERE ns=$1", [f.ns, randomUUID()]);
-      else await f.control.query("UPDATE harness SET epoch=epoch+1 WHERE ns=$1", [f.ns]);
+      } else await f.control.query("UPDATE harness SET epoch=epoch+1 WHERE ns=$1", [f.ns]);
       const before = await f.snapshot();
       await expect(f.open()).rejects.toThrow("Stale");
       await expect(f.storage.commit([entry(1000)], context)).rejects.toThrow("Stale");
@@ -74,11 +74,12 @@ for (const changed of ["owner", "epoch"] as const)
       await f.finish();
     }
   });
+}
 
-for (const applied of [false, true])
+for (const applied of [false, true]) {
   it(`unknown claim ACK applied=${applied} is never retried or turned into a lease`, async () => {
     const f = await historyFixture("claim_unknown");
-    const failure = Error("claim acknowledgement lost");
+    const failure = new Error("claim acknowledgement lost");
     const { authority, trace } = await traced(
       faultOnce(applied ? "after" : "before", "UPDATE harness SET epoch", () => failure),
     );
@@ -97,8 +98,9 @@ for (const applied of [false, true])
       await f.finish();
     }
   });
+}
 
-for (const exhausted of [false, true])
+for (const exhausted of [false, true]) {
   it(`claim retries only confirmed aborts with one fixed owner token and a three-attempt limit (exhausted=${exhausted})`, async () => {
     const f = await historyFixture("claim_abort");
     const failures: Error[] = [];
@@ -130,3 +132,4 @@ for (const exhausted of [false, true])
       await f.finish();
     }
   });
+}

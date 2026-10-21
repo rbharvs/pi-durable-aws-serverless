@@ -49,8 +49,9 @@ it("round-trips complete raw records, detached values, immutable IDs and commit 
     expect(await f.storage.conversation(conversationId(1), context)).toEqual(conversation().value);
     const before = await f.snapshot();
 
-    for (const replacement of [entry(20, { kind: "replacement" }), conversation(20)])
+    for (const replacement of [entry(20, { kind: "replacement" }), conversation(20)]) {
       await expect(f.storage.commit([entry(1000), replacement], context)).rejects.toThrow();
+    }
     expect(await f.snapshot()).toEqual(before);
     expect(f.storage.status).toBe("open");
     await f.storage.close(context);
@@ -137,8 +138,9 @@ it("nested forks inherit inclusive cutoffs, not later ancestor writes; pages and
         )
       ).items.map((r) => r.id),
     ).toEqual([20, 50, 80]);
-    for (const id of [10, 20, 50, 80, 90])
+    for (const id of [10, 20, 50, 80, 90]) {
       expect((await storage.entry(scope, entryId(id), context))?.entry.id).toBe(id);
+    }
     for (const id of [30, 60, 100, 110]) {
       expect(await storage.entry(scope, entryId(id), context)).toBeUndefined();
       expect((await storage.entry(entryId(id), context))?.entry.id).toBe(id);
@@ -150,7 +152,7 @@ it("nested forks inherit inclusive cutoffs, not later ancestor writes; pages and
       [50, 50],
       [20, 20],
       [9, undefined],
-    ] as const)
+    ] as const) {
       expect(
         (
           await storage.findLatestHeadMarker(
@@ -160,6 +162,7 @@ it("nested forks inherit inclusive cutoffs, not later ancestor writes; pages and
           )
         )?.id,
       ).toBe(expected);
+    }
     expect((await storage.findLatestHeadMarker(scope, undefined, context))?.head).toBe(50);
     await expect(
       storage.scanEntries({ conversationId: conversationId(999) }, 2, undefined, context),
@@ -244,7 +247,7 @@ for (const field of [
   "maxEntryId",
   "cursor.after",
   "cursor.order",
-] as const)
+] as const) {
   it(`scanEntries detaches ${field} at invocation, before a held read releases the gate`, async () => {
     const gate = queryGate("after", (sql) => sql === BEGIN_READ);
     const f = await historyFixture("entry_scan_detach", { hook: gate.hook });
@@ -318,6 +321,7 @@ for (const field of [
       await f.finish();
     }
   });
+}
 
 for (const field of [
   "ownerConversationId",
@@ -325,7 +329,7 @@ for (const field of [
   "order",
   "cursor.after",
   "cursor.order",
-] as const)
+] as const) {
   it(`scanConversations detaches ${field} at invocation, before a held read releases the gate`, async () => {
     const gate = queryGate("after", (sql) => sql === BEGIN_READ);
     const f = await historyFixture("conversation_scan_detach", { hook: gate.hook });
@@ -404,8 +408,9 @@ for (const field of [
       await f.finish();
     }
   });
+}
 
-for (const scan of ["entries", "conversations"] as const)
+for (const scan of ["entries", "conversations"] as const) {
   it(`a queued ${scan} scan preserves an originally invalid cursor even if the caller repairs it`, async () => {
     const gate = queryGate("after", (sql) => sql === BEGIN_READ);
     const f = await historyFixture("invalid_cursor_detach", { hook: gate.hook });
@@ -435,12 +440,13 @@ for (const scan of ["entries", "conversations"] as const)
       await f.finish();
     }
   });
+}
 
-for (const scan of ["entries", "conversations"] as const)
-  for (const source of ["query", "cursor"] as const)
+for (const scan of ["entries", "conversations"] as const) {
+  for (const source of ["query", "cursor"] as const) {
     it(`${scan} scan returns a rejected Promise, not a synchronous throw, for a failing ${source} getter`, async () => {
       const f = await historyFixture("scan_getter_rejection");
-      const cause = Error(`caller ${source} getter failed`);
+      const cause = new Error(`caller ${source} getter failed`);
       const query =
         source === "query"
           ? {
@@ -476,10 +482,12 @@ for (const scan of ["entries", "conversations"] as const)
         await f.finish();
       }
     });
+  }
+}
 
 const invalidCursors: Cursor[] = [{ after: "10" }, { after: 1.5 }, { after: 2, order: "sideways" }];
 
-for (const cursor of invalidCursors)
+for (const cursor of invalidCursors) {
   it(`rejects malformed entry and conversation cursors ${JSON.stringify(cursor)} without changing durable state`, async () => {
     const f = await historyFixture("bad_cursor");
 
@@ -499,6 +507,7 @@ for (const cursor of invalidCursors)
       await f.finish();
     }
   });
+}
 
 it("entry cursor order is retained when omitted and an explicit opposite order is rejected", async () => {
   const f = await historyFixture("entry_cursor_order");
@@ -553,7 +562,7 @@ const corruptions = [
   ],
 ] as const;
 
-for (const [name, sql] of corruptions)
+for (const [name, sql] of corruptions) {
   it(`rejects ${name} on global and scoped entry reads without masking corruption as absence`, async () => {
     const f = await historyFixture("history_corrupt");
 
@@ -571,11 +580,12 @@ for (const [name, sql] of corruptions)
       await f.finish();
     }
   });
+}
 
 for (const [parent, message] of [
   [1, "Conversation ancestry cycle"],
   [999, "Unknown conversation"],
-] as const)
+] as const) {
   it(`rejects corrupt ancestry (${message}) instead of returning a partial history`, async () => {
     const f = await historyFixture("ancestry_corrupt");
 
@@ -602,6 +612,7 @@ for (const [parent, message] of [
       await f.finish();
     }
   });
+}
 
 it("corrupt conversation owners are rejected by both direct reads and scans", async () => {
   const f = await historyFixture("owner_corrupt");
@@ -708,7 +719,7 @@ const corruptJsonNumbers = [
   { name: "entry head string", type: "entry", path: "{head}", value: "10" },
 ] as const;
 
-for (const corruption of corruptJsonNumbers)
+for (const corruption of corruptJsonNumbers) {
   it(`classifies durable ${corruption.name} metadata as PayloadCorrupt, not a bad request`, async () => {
     const f = await historyFixture("json_numeric_corrupt");
     try {
@@ -750,3 +761,4 @@ for (const corruption of corruptJsonNumbers)
       await f.finish();
     }
   });
+}

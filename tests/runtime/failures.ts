@@ -21,19 +21,19 @@ import { idFromNumber } from "../../src/ids.ts";
 import { BACKGROUND_CONTEXT as context } from "@earendil-works/chord/context";
 
 it("late asynchronous failed Session after final durable scheduler work rejects and never releases", async () => {
-  const ns = harnessId("late"),
-    objects = memoryObjectsFixture(),
-    work = controlledWork();
+  const ns = harnessId("late");
+  const objects = memoryObjectsFixture();
+  const work = controlledWork();
   let time = 10000;
-  const backend = createMemoryBackend({ now: () => time }),
-    authority = await backend.connectAuthority();
-  const lost = Error("final scheduler acknowledgement lost");
-  let fired = false,
-    releases = 0,
-    closeCompleted = false,
-    closed: SessionEnd | undefined,
-    lease: Lease | undefined,
-    harness: Harness | undefined;
+  const backend = createMemoryBackend({ now: () => time });
+  const authority = await backend.connectAuthority();
+  const lost = new Error("final scheduler acknowledgement lost");
+  let fired = false;
+  let releases = 0;
+  let closeCompleted = false;
+  let closed: SessionEnd | undefined;
+  let lease: Lease | undefined;
+  let harness: Harness | undefined;
   const wrapped: Backend = {
     ...backend,
     connectAuthority: async () => {
@@ -56,7 +56,7 @@ it("late asynchronous failed Session after final durable scheduler work rejects 
       return new Proxy(s, {
         get(target, key) {
           if (key === "then") return undefined;
-          if (key === "commit")
+          if (key === "commit") {
             return async (...args: Parameters<Storage["commit"]>) => {
               const seq = await target.commit(...args);
 
@@ -72,11 +72,13 @@ it("late asynchronous failed Session after final durable scheduler work rejects 
 
               return seq;
             };
-          if (key === "close")
+          }
+          if (key === "close") {
             return async (c: Parameters<Storage["close"]>[0]) => {
               await target.close(c);
               closeCompleted = true;
             };
+          }
 
           const value = Reflect.get(target, key);
 
@@ -161,10 +163,10 @@ it("late asynchronous failed Session after final durable scheduler work rejects 
 });
 
 it("runtime open failure before Harness creation closes acquired actual Storage", async () => {
-  const f = await memoryFixture(),
-    objects = memoryObjectsFixture();
-  let acquired: Storage | undefined,
-    closes = 0;
+  const f = await memoryFixture();
+  const objects = memoryObjectsFixture();
+  let acquired: Storage | undefined;
+  let closes = 0;
   const backend: Backend = {
     ...f.backend,
     openStorage: async (lease) => {
@@ -175,11 +177,12 @@ it("runtime open failure before Harness creation closes acquired actual Storage"
       return new Proxy(acquired, {
         get(target, key) {
           if (key === "then") return undefined;
-          if (key === "close")
+          if (key === "close") {
             return async (c: Parameters<Storage["close"]>[0]) => {
               closes++;
               await close(c);
             };
+          }
 
           const value = Reflect.get(target, key);
 
@@ -188,8 +191,8 @@ it("runtime open failure before Harness creation closes acquired actual Storage"
       });
     },
   };
-  const registry = createRegistry(),
-    snapshot = registry.snapshot();
+  const registry = createRegistry();
+  const snapshot = registry.snapshot();
 
   // A malformed registry reaches real Harness.open's pre-creation validation, not a fake Harness.
   registry.snapshot = () =>
@@ -223,30 +226,30 @@ it("runtime open failure before Harness creation closes acquired actual Storage"
 });
 
 it("successful Harness.open followed by root-creation failure closes actual Harness and Storage without release", async () => {
-  const ns = harnessId("root-failure"),
-    backend = createMemoryBackend({ now: () => 10000 }),
-    objects = memoryObjectsFixture(),
-    work = controlledWork(),
-    cause = Error("root callback failed");
+  const ns = harnessId("root-failure");
+  const backend = createMemoryBackend({ now: () => 10000 });
+  const objects = memoryObjectsFixture();
+  const work = controlledWork();
+  const cause = new Error("root callback failed");
   const authority = await backend.connectAuthority();
-  let actual: Harness | undefined,
-    closed: SessionEnd | undefined,
-    acquired: Storage | undefined,
-    lease: Lease | undefined,
-    closes = 0,
-    releases = 0,
-    rootCallbacks = 0;
-  const originalOpen = Harness.open,
-    openSpy = vi.spyOn(Harness, "open").mockImplementation(async (...args) => {
-      const h = await originalOpen(...args);
+  let actual: Harness | undefined;
+  let closed: SessionEnd | undefined;
+  let acquired: Storage | undefined;
+  let lease: Lease | undefined;
+  let closes = 0;
+  let releases = 0;
+  let rootCallbacks = 0;
+  const originalOpen = Harness.open;
+  const openSpy = vi.spyOn(Harness, "open").mockImplementation(async (...args) => {
+    const h = await originalOpen(...args);
 
-      actual = h;
-      void h.closed.then((end) => {
-        closed = end;
-      });
-
-      return h;
+    actual = h;
+    void h.closed.then((end) => {
+      closed = end;
     });
+
+    return h;
+  });
   const wrapped: Backend = {
     ...backend,
     connectAuthority: async () => {
@@ -268,12 +271,13 @@ it("successful Harness.open followed by root-creation failure closes actual Harn
       return new Proxy(acquired, {
         get(target, key) {
           if (key === "then") return undefined;
-          if (key === "close")
+          if (key === "close") {
             return async (c: Parameters<Storage["close"]>[0]) => {
               closes++;
 
               return target.close(c);
             };
+          }
 
           const value = Reflect.get(target, key);
 

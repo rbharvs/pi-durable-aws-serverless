@@ -6,12 +6,12 @@ import { modelWork, workerFixture } from "./worker-support.ts";
 
 it("another owner cold-recovers two full-size PNG inputs from durable objects after staging deletion", async () => {
   const f = await workerFixture("worker_large", true);
-  let remaining = 45000,
-    mapped = 0;
+  let remaining = 45000;
+  let mapped = 0;
   const connect = f.deps.connectAuthority;
   f.deps.connectAuthority = async () => {
-    const c = await connect(),
-      mark = c.markAdmitted.bind(c);
+    const c = await connect();
+    const mark = c.markAdmitted.bind(c);
     c.markAdmitted = async (item, id) => {
       await mark(item, id);
       if (++mapped === 3) remaining = 5000;
@@ -49,11 +49,12 @@ it("another owner cold-recovers two full-size PNG inputs from durable objects af
     fresh.models.streamSimple = (model, transcript, options) => {
       for (const message of transcript.messages) {
         if (message.role !== "user" || !Array.isArray(message.content)) continue;
-        for (const block of message.content)
+        for (const block of message.content) {
           if (block.type === "image") {
             expect(computeSha256(block.data)).toBe(imageFixture.base64Sha256);
             contextImages++;
           }
+        }
       }
       return stream(model, transcript, options);
     };
@@ -65,15 +66,17 @@ it("another owner cold-recovers two full-size PNG inputs from durable objects af
     const output = await f.output();
     expect(output.submissions.map((s) => s.status)).toEqual(["done", "done", "done"]);
     let images = 0;
-    for (const entry of output.entries)
+    for (const entry of output.entries) {
       for (const message of entry.model ?? []) {
         if (message.role !== "user" || !Array.isArray(message.content)) continue;
-        for (const block of message.content)
+        for (const block of message.content) {
           if (block.type === "image") {
             expect(computeSha256(block.data)).toBe(imageFixture.base64Sha256);
             images++;
           }
+        }
       }
+    }
     expect(images).toBe(2);
     expect(f.objects.openHandles()).toBe(0);
   } finally {

@@ -1,10 +1,10 @@
 import type { S3ClientConfig } from "@aws-sdk/client-s3";
 import { check } from "../domain.ts";
 
-export type AwsOptions = {
+export interface AwsOptions {
   readonly region: string;
   readonly credentials?: S3ClientConfig["credentials"];
-};
+}
 
 export const REQUEST_MS = 20000;
 export const transport = {

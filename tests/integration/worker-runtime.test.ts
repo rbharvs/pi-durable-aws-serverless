@@ -8,10 +8,10 @@ import { EnvelopeRejected } from "../../src/payload.ts";
 import { provider } from "./postgres.ts";
 import { workerFixture } from "./worker-support.ts";
 
-for (const cut of ["object-factory", "storage-connect"] as const)
+for (const cut of ["object-factory", "storage-connect"] as const) {
   it(`runtime acquisition failure at ${cut} closes everything acquired and retains ownership`, async () => {
     const f = await workerFixture("worker_acquire");
-    const cause = Error(cut);
+    const cause = new Error(cut);
     let closes = 0;
     const broken = createSqlBackend(
       {
@@ -22,8 +22,8 @@ for (const cut of ["object-factory", "storage-connect"] as const)
       },
       (ns) => {
         if (cut === "object-factory") throw cause;
-        const store = f.objects.objects(ns),
-          close = store.close.bind(store);
+        const store = f.objects.objects(ns);
+        const close = store.close.bind(store);
         store.close = () => {
           closes++;
           close();
@@ -49,16 +49,17 @@ for (const cut of ["object-factory", "storage-connect"] as const)
       await f.finish();
     }
   });
+}
 
 it("runtime tolerates repeated Storage close after Harness initialization fails", async () => {
   const f = await workerFixture("worker_open_tasks");
-  const cause = Error("open tasks failed");
+  const cause = new Error("open tasks failed");
   let closes = 0;
   const open = f.backend.openStorage;
   f.backend.openStorage = async (lease) => {
-    const storage = await open(lease),
-      scanTasks = storage.scanTasks.bind(storage),
-      close = storage.close.bind(storage);
+    const storage = await open(lease);
+    const scanTasks = storage.scanTasks.bind(storage);
+    const close = storage.close.bind(storage);
     storage.scanTasks = async (...args) => {
       await scanTasks(...args);
       throw cause;
@@ -84,14 +85,14 @@ it("runtime tolerates repeated Storage close after Harness initialization fails"
 
 it("late Session failure after the final durable scheduler commit never turns into a clean release", async () => {
   const f = await workerFixture("worker_late_failure");
-  const cause = Error("final acknowledgement lost");
-  let fired = false,
-    closed = false;
+  const cause = new Error("final acknowledgement lost");
+  let fired = false;
+  let closed = false;
   const open = f.backend.openStorage;
   f.backend.openStorage = async (lease) => {
-    const s = await open(lease),
-      commit = s.commit.bind(s),
-      close = s.close.bind(s);
+    const s = await open(lease);
+    const commit = s.commit.bind(s);
+    const close = s.close.bind(s);
     s.commit = async (writes, c) => {
       const seq = await commit(writes, c);
       if (
@@ -133,8 +134,8 @@ it("a takeover between clean close and release returns lost without disturbing t
   const connect = f.deps.connectAuthority;
   let successor: unknown;
   f.deps.connectAuthority = async () => {
-    const c = await connect(),
-      release = c.release.bind(c);
+    const c = await connect();
+    const release = c.release.bind(c);
     c.release = async (lease) => {
       expect(f.objects.openHandles()).toBe(0);
       expect(f.events.some((e) => e.event === "closed")).toBe(true);
@@ -172,7 +173,9 @@ it("worker root initialization cannot bypass the aggregate logical write budget"
     harnessOptions: {
       ...f.options.harnessOptions,
       conversationCreated: async (tx, conversation) => {
-        for (const doc of docs) await tx.doc(doc, conversation.id);
+        for (const doc of docs) {
+          await tx.doc(doc, conversation.id);
+        }
       },
     },
   });
@@ -237,7 +240,7 @@ it("worker-created history objects above the receipt limit remain cold-readable"
 
 it("an object reader failure closes its handle and leaves the receipt recoverable", async () => {
   const f = await workerFixture("worker_reader");
-  const cause = Error("payload read unavailable");
+  const cause = new Error("payload read unavailable");
   let closes = 0;
   const deps = runtimeDependencies({
     ...f.options,

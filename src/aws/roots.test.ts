@@ -34,7 +34,7 @@ function normal() {
     aws,
     provider: {
       connect: async () => {
-        throw Error("unexpected SQL connection");
+        throw new Error("unexpected SQL connection");
       },
       isRetryableAbort: () => false,
     },
@@ -84,7 +84,7 @@ it("normal API root retains stable codes, empty input, canonical cross-transport
     ...first,
     duplicate: true,
   });
-  for (const content of ["", []])
+  for (const content of ["", []]) {
     expect(
       await apiHandler(
         {
@@ -95,6 +95,7 @@ it("normal API root retains stable codes, empty input, canonical cross-transport
         ctx,
       ),
     ).toMatchObject({ ok: true });
+  }
   expect(f.close).toHaveBeenCalledTimes(8);
   expect(f.objectStore.openHandles()).toBe(0);
   expect(f.wakes).toHaveLength(5);
@@ -103,7 +104,7 @@ it("normal API root retains stable codes, empty input, canonical cross-transport
 it("normal root lazily acquires object handles and returns unavailable for a failed staged acquisition", async () => {
   const f = normal();
   const acquire = vi.fn(() => {
-    throw Error("private acquisition");
+    throw new Error("private acquisition");
   });
   f.factory.mockReturnValue(acquire);
   expect(await apiHandler(input, ctx)).toMatchObject({ ok: true });
@@ -120,9 +121,9 @@ it("normal root lazily acquires object handles and returns unavailable for a fai
 
 it("normal API composition/acquisition diagnostics redact arbitrary provider names, messages and nested causes", async () => {
   const f = normal();
-  const error = Object.assign(Error("SELECT private credential body"), {
+  const error = Object.assign(new Error("SELECT private credential body"), {
     name: "secret-password",
-    cause: Error("nested-token"),
+    cause: new Error("nested-token"),
   });
   f.config.mockImplementationOnce(() => {
     throw error;
@@ -157,7 +158,7 @@ it("normal API composition/acquisition diagnostics redact arbitrary provider nam
   expect(JSON.stringify(rows)).not.toMatch(/SELECT|private|credential|password|nested-token|body/);
   expect(error.cause.message).toBe("nested-token");
   f.log.mockImplementation(() => {
-    throw Error("logging failure");
+    throw new Error("logging failure");
   });
   expect(await apiHandler(input, ctx)).toEqual({ ok: false, code: "unavailable", retryable: true });
 });
@@ -176,7 +177,7 @@ it("missing resource config fails before dispatch acquisition and normal reconci
 it("injected API root preserves every dependency receiver and joins async composition cleanup after wake", async () => {
   const backend = createMemoryBackend();
   const trace: string[] = [];
-  const observers: { kind: string; receiver: unknown }[] = [];
+  const observers: Array<{ kind: string; receiver: unknown }> = [];
   const deps: ApiDependencies & { close(): Promise<void> } = {
     async connectAuthority() {
       expect(this).toBe(deps);
@@ -204,7 +205,7 @@ it("injected API root preserves every dependency receiver and joins async compos
       expect(this).toBe(deps);
       await Promise.resolve();
       trace.push("composition");
-      throw Error("secondary cleanup");
+      throw new Error("secondary cleanup");
     },
   };
   expect(await apiRoot(() => deps)(input, ctx)).toMatchObject({ ok: true });
@@ -219,7 +220,7 @@ it("injected API root preserves every dependency receiver and joins async compos
   expect(observers.every((o) => o.receiver === deps)).toBe(true);
 });
 
-for (const applied of [false, true])
+for (const applied of [false, true]) {
   it(`unknown receipt outcome applied=${applied} retains all cleanup and same-request retry semantics through root`, async () => {
     const backend = createMemoryBackend();
     const f = sdkObjects();
@@ -232,12 +233,12 @@ for (const applied of [false, true])
           get: a.get.bind(a),
           async receive(...args) {
             if (applied) await a.receive(...args);
-            throw Error("unknown commit");
+            throw new Error("unknown commit");
           },
           async close() {
             await a.close();
             trace.push("authority");
-            throw Error("secondary");
+            throw new Error("secondary");
           },
         };
       },
@@ -247,12 +248,12 @@ for (const applied of [false, true])
         store.close = () => {
           close();
           trace.push("objects");
-          throw Error("secondary");
+          throw new Error("secondary");
         };
         return store;
       },
       event() {
-        throw Error("observer");
+        throw new Error("observer");
       },
       dispatch: {
         wake: async () => {
@@ -262,7 +263,7 @@ for (const applied of [false, true])
       async close() {
         await Promise.resolve();
         trace.push("composition");
-        throw Error("secondary");
+        throw new Error("secondary");
       },
     };
     expect(
@@ -273,11 +274,12 @@ for (const applied of [false, true])
     deps.connectAuthority = () => backend.connectAuthority();
     expect(await apiRoot(() => deps)(input, ctx)).toMatchObject({ ok: true, duplicate: applied });
   });
+}
 
 it("reconciler root closes before wakes, continues failures and preserves discovery failure over async cleanup", async () => {
   const trace: string[] = [];
   const observers: unknown[] = [];
-  const primary = Error("discovery");
+  const primary = new Error("discovery");
   let fail = false;
   const deps = {
     async connectAuthority() {
@@ -296,7 +298,7 @@ it("reconciler root closes before wakes, continues failures and preserves discov
       async wake(n: string) {
         expect(this).toBe(deps.dispatch);
         trace.push(n);
-        if (n === "a") throw Error("unknown wake");
+        if (n === "a") throw new Error("unknown wake");
       },
     },
     event() {
@@ -306,7 +308,7 @@ it("reconciler root closes before wakes, continues failures and preserves discov
       expect(this).toBe(deps);
       await Promise.resolve();
       trace.push("composition");
-      throw Error("secondary");
+      throw new Error("secondary");
     },
   };
   const run = reconcilerRoot(() => deps);
@@ -329,10 +331,10 @@ it("worker entry validates namespace before composition and retains context/depe
       return backend.connectAuthority();
     },
     async open() {
-      throw Error("idle must not open Pi");
+      throw new Error("idle must not open Pi");
     },
     async resolve() {
-      throw Error("idle must not resolve");
+      throw new Error("idle must not resolve");
     },
     event() {
       observers.push(this);

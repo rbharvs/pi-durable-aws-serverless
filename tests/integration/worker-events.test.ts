@@ -2,19 +2,19 @@ import { expect, it } from "vitest";
 import { runtimeDependencies, worker, type WorkerDependencies } from "../../src/index.ts";
 import { workerFixture } from "./worker-support.ts";
 
-for (const fail of [false, true])
+for (const fail of [false, true]) {
   it(`class event method observes ${fail ? "worker error" : "normal release"} and cleanup diagnostics exactly once`, async () => {
     const f = await workerFixture("worker_event_receiver");
-    const cause = Error("resolve failed");
+    const cause = new Error("resolve failed");
     class Ports implements WorkerDependencies {
-      readonly seen: { name: string; fields: Record<string, unknown> }[] = [];
+      readonly seen: Array<{ name: string; fields: Record<string, unknown> }> = [];
       open = f.deps.open;
       async connectAuthority() {
-        const authority = await f.deps.connectAuthority(),
-          close = authority.close.bind(authority);
+        const authority = await f.deps.connectAuthority();
+        const close = authority.close.bind(authority);
         authority.close = async () => {
           await close();
-          throw Error("authority cleanup failed");
+          throw new Error("authority cleanup failed");
         };
         return authority;
       }
@@ -25,8 +25,9 @@ for (const fail of [false, true])
       event(name: string, fields: Record<string, unknown>) {
         this.seen.push({ name, fields });
         // Observer failure must neither alter the outcome nor cause a second delivery.
-        if (["claimed", "closing", "closed", "worker-error"].includes(name))
-          throw Error("observer failed");
+        if (["claimed", "closing", "closed", "worker-error"].includes(name)) {
+          throw new Error("observer failed");
+        }
       }
     }
     const ports = new Ports();
@@ -69,21 +70,22 @@ for (const fail of [false, true])
       await f.finish();
     }
   });
+}
 
 it("runtime preserves its options event receiver for payload cleanup and worker events", async () => {
   const f = await workerFixture("runtime_event_receiver");
   const options = {
     ...f.options,
-    seen: [] as { name: string; fields: Record<string, unknown> }[],
+    seen: [] as Array<{ name: string; fields: Record<string, unknown> }>,
     event(name: string, fields: Record<string, unknown>) {
       this.seen.push({ name, fields });
     },
     objects(ns: typeof f.ns) {
-      const store = f.objects.objects(ns),
-        close = store.close.bind(store);
+      const store = f.objects.objects(ns);
+      const close = store.close.bind(store);
       store.close = () => {
         close();
-        throw Error("reader cleanup failed");
+        throw new Error("reader cleanup failed");
       };
       return store;
     },

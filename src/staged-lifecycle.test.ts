@@ -26,7 +26,7 @@ function recordingAuthority(order: string[]): ApiAuthority {
 it("does not initialize optional objects for inline submissions or malformed staged references", async () => {
   const run = apiHandler({
     objects: () => {
-      throw Error("must not initialize objects");
+      throw new Error("must not initialize objects");
     },
     connectAuthority: async () => recordingAuthority([]),
     dispatch: { wake: async () => {} },
@@ -51,11 +51,11 @@ it("rejects staged transport without a capability before connecting authority", 
   const fixture = objectFixture();
   const run = apiHandler({
     connectAuthority: async () => {
-      throw Error("must not connect");
+      throw new Error("must not connect");
     },
     dispatch: {
       wake: async () => {
-        throw Error("must not wake");
+        throw new Error("must not wake");
       },
     },
     event: () => {},
@@ -73,12 +73,12 @@ for (const phase of [
   "receipt-read",
   "receipt-write",
   "publish",
-] as const)
+] as const) {
   it(`cleans up owned resources after ${phase} failure without exposing causes`, async () => {
     const fixture = objectFixture();
     const order: string[] = [];
-    const events: Record<string, unknown>[] = [];
-    const cause = Error("private provider secret");
+    const events: Array<Record<string, unknown>> = [];
+    const cause = new Error("private provider secret");
     const authority = recordingAuthority(order);
     const deps: ApiDependencies = {
       connectAuthority: async () => {
@@ -108,18 +108,20 @@ for (const phase of [
         events.push({ name, ...fields });
       },
       report: () => {
-        throw Error("broken private reporter");
+        throw new Error("broken private reporter");
       },
     };
 
-    if (phase === "receipt-read")
+    if (phase === "receipt-read") {
       authority.get = async () => {
         throw cause;
       };
-    if (phase === "receipt-write")
+    }
+    if (phase === "receipt-write") {
       authority.receive = async () => {
         throw cause;
       };
+    }
     const run = apiHandler(deps);
     const input = phase === "receipt-write" ? small : large;
     const response = await run({
@@ -137,6 +139,7 @@ for (const phase of [
     expect(fixture.openHandles()).toBe(0);
     expect(fixture.publishedKeys()).toEqual([]);
   });
+}
 
 it("clears ownership and closes both resources once before a blocked wake despite cleanup and diagnostic failures", async () => {
   const fixture = objectFixture();
@@ -149,7 +152,7 @@ it("clears ownership and closes both resources once before a blocked wake despit
       ...authority,
       close: async () => {
         await authority.close();
-        throw Error("unknown close ACK");
+        throw new Error("unknown close ACK");
       },
     }),
     objects: () => {
@@ -160,7 +163,7 @@ it("clears ownership and closes both resources once before a blocked wake despit
         close: async () => {
           await objects.close();
           order.push("objects-closed");
-          throw Error("object close failure");
+          throw new Error("object close failure");
         },
       };
     },
@@ -169,11 +172,11 @@ it("clears ownership and closes both resources once before a blocked wake despit
         order.push("wake");
         entered.resolve();
         await wake.promise;
-        throw Error("wake failure");
+        throw new Error("wake failure");
       },
     },
     event: () => {
-      throw Error("observer failure");
+      throw new Error("observer failure");
     },
   });
   let settled = false;
@@ -260,7 +263,7 @@ it("verifies the declared raw integrity even if the adapter changes the referenc
 
 it("reports a non-binary adapter stream as unavailable, not as invalid client content", async () => {
   const fixture = objectFixture();
-  const events: Record<string, unknown>[] = [];
+  const events: Array<Record<string, unknown>> = [];
   const run = apiHandler({
     connectAuthority: async () => recordingAuthority([]),
     objects: (ns) => ({

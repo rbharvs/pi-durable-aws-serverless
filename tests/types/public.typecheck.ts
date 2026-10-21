@@ -1,4 +1,14 @@
+import type { JsonValue } from "@earendil-works/chord";
+import type { CanonicalInput } from "../../src/input.ts";
 import type {
+  AcceptedInput,
+  Admitted,
+  AgentInput,
+  Events,
+  InboxItem,
+  PublishedPayload,
+  Received,
+  StagedReference,
   Authority,
   ApiAuthority,
   ApiDependencies,
@@ -74,6 +84,42 @@ export type WireCodes = Assert<
 export type RetryableCodes = Assert<
   Equal<Extract<SubmitResponse, { retryable: true }>["code"], "unavailable" | "internal">
 >;
+
+/** Public data values can be logged directly and payload metadata can be stored as Pi JSON. */
+export function publicDataConsumers(
+  event: Events,
+  accepted: AcceptedInput,
+  received: Received,
+  input: AgentInput,
+  staged: StagedReference,
+  published: PublishedPayload,
+  canonical: CanonicalInput,
+  admitted: Admitted,
+  item: InboxItem,
+) {
+  event("accepted", accepted);
+  event("received", received);
+  event("input", input);
+  event("staged", staged);
+  event("published", published);
+  event("canonical", canonical);
+  event("admitted", admitted);
+  event("item", item);
+
+  const records: Array<Record<string, unknown>> = [
+    accepted,
+    received,
+    input,
+    staged,
+    published,
+    canonical,
+    admitted,
+    item,
+  ];
+  const metadata: JsonValue[] = [published, staged];
+
+  return { records, metadata };
+}
 
 export function capabilities(a: Authority) {
   // @ts-expect-error No SQL escape in application authority.

@@ -5,9 +5,9 @@ import { worker, type WorkerDependencies } from "../../src/index.ts";
 import { BEGIN_WRITE } from "../../src/sql/db.ts";
 import { deferred, workerFixture } from "./worker-support.ts";
 
-for (const exit of ["deadline", "in-loop"] as const)
+for (const exit of ["deadline", "in-loop"] as const) {
   it(`failed Session between work polls retains ownership on ${exit} exit`, async () => {
-    const cause = Error("durability failure between worker polls");
+    const cause = new Error("durability failure between worker polls");
     let armed = false;
     const f = await workerFixture("worker_failed_poll", true, async (phase, sql) => {
       if (armed && phase === "before" && sql === BEGIN_WRITE) {
@@ -15,10 +15,10 @@ for (const exit of ["deadline", "in-loop"] as const)
         throw cause;
       }
     });
-    let harness: Harness | undefined,
-      budget = 45000,
-      failedBetweenPolls = false,
-      polledAfterFailure = false;
+    let harness: Harness | undefined;
+    let budget = 45000;
+    let failedBetweenPolls = false;
+    let polledAfterFailure = false;
     const ports: WorkerDependencies = {
       ...f.deps,
       async open(lease) {
@@ -27,8 +27,8 @@ for (const exit of ["deadline", "in-loop"] as const)
         return opened;
       },
       async connectAuthority() {
-        const authority = await f.deps.connectAuthority(),
-          hasWork = authority.hasWork.bind(authority);
+        const authority = await f.deps.connectAuthority();
+        const hasWork = authority.hasWork.bind(authority);
         authority.hasWork = async (ns) => {
           const work = await hasWork(ns);
           if (!harness) return work; // Keep the real pre-open idle check.
@@ -64,19 +64,20 @@ for (const exit of ["deadline", "in-loop"] as const)
       await f.finish();
     }
   });
+}
 
 it("resolve failure joins gated writer close before worker rejection", async () => {
   const f = await workerFixture("worker_error_join");
-  const closing = deferred(),
-    join = deferred();
+  const closing = deferred();
+  const join = deferred();
   const open = f.backend.openStorage;
-  let writerClosed = false,
-    workerSettled = false,
-    harness: Harness | undefined;
+  let writerClosed = false;
+  let workerSettled = false;
+  let harness: Harness | undefined;
   let authorityClosing: Promise<void> | undefined;
   f.backend.openStorage = async (lease) => {
-    const storage = await open(lease),
-      close = storage.close.bind(storage);
+    const storage = await open(lease);
+    const close = storage.close.bind(storage);
     storage.close = async (context) => {
       closing.resolve();
       await join.promise;
@@ -85,7 +86,7 @@ it("resolve failure joins gated writer close before worker rejection", async () 
     };
     return storage;
   };
-  const cause = Error("resolve failed after open");
+  const cause = new Error("resolve failed after open");
   const ports: WorkerDependencies = {
     ...f.deps,
     async open(lease) {
@@ -94,8 +95,8 @@ it("resolve failure joins gated writer close before worker rejection", async () 
       return opened;
     },
     async connectAuthority() {
-      const authority = await f.deps.connectAuthority(),
-        close = authority.close.bind(authority);
+      const authority = await f.deps.connectAuthority();
+      const close = authority.close.bind(authority);
       authority.close = () => (authorityClosing = close());
       return authority;
     },

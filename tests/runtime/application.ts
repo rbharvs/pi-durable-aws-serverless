@@ -18,10 +18,10 @@ const command = { kind: "inline", input: { content: "hello", whenBusy: "followUp
 
 function fixture(tools = false) {
   let time = 10000;
-  const backend = createMemoryBackend({ now: () => time }),
-    objects = objectFixture(),
-    work = controlledWork(tools);
-  const hints: (typeof ns)[] = [];
+  const backend = createMemoryBackend({ now: () => time });
+  const objects = objectFixture();
+  const work = controlledWork(tools);
+  const hints: Array<typeof ns> = [];
   const dispatch = {
     wake: async (id: typeof ns) => {
       hints.push(id);
@@ -61,14 +61,14 @@ function fixture(tools = false) {
 }
 
 it("memory real Harness: lost hint, reconcile, explicit delivery, output and cold continuation", async () => {
-  const f = fixture(),
-    a = await f.backend.connectAuthority();
+  const f = fixture();
+  const a = await f.backend.connectAuthority();
   try {
     const lost = apiHandler({
       ...f.apiDeps,
       dispatch: {
         wake: async () => {
-          throw Error("lost hint");
+          throw new Error("lost hint");
         },
       },
     });
@@ -108,8 +108,8 @@ it("memory real Harness: lost hint, reconcile, explicit delivery, output and col
 });
 
 it("memory submit-before-mark cut recovers one real submission and user entry after takeover", async () => {
-  const f = fixture(),
-    a = await f.backend.connectAuthority();
+  const f = fixture();
+  const a = await f.backend.connectAuthority();
   const connect = f.deps.connectAuthority;
   let cut = true;
   f.deps.connectAuthority = async () => {
@@ -119,7 +119,7 @@ it("memory submit-before-mark cut recovers one real submission and user entry af
       markAdmitted: async (...args) => {
         if (cut) {
           cut = false;
-          throw Error("submit-mark cut");
+          throw new Error("submit-mark cut");
         }
         return control.markAdmitted(...args);
       },
@@ -158,8 +158,8 @@ it("memory submit-before-mark cut recovers one real submission and user entry af
 });
 
 it("memory safe tool restarts twice, unsafe never replays; held competitors cannot disturb it", async () => {
-  const f = fixture(true),
-    a = await f.backend.connectAuthority();
+  const f = fixture(true);
+  const a = await f.backend.connectAuthority();
   let opened: Awaited<ReturnType<typeof f.deps.open>> | undefined;
   const open = f.deps.open;
   f.deps.open = async (lease) => (opened = await open(lease));
@@ -197,7 +197,9 @@ it("memory safe tool restarts twice, unsafe never replays; held competitors cann
       await s.close(context);
     }
   } finally {
-    for (const start of f.work.starts) start.finish();
+    for (const start of f.work.starts) {
+      start.finish();
+    }
     await opened?.harness.close(context);
     await running?.catch(() => {});
     await a.close();

@@ -5,10 +5,10 @@ import { worker, type WorkerDependencies } from "../../src/index.ts";
 import { BEGIN_WRITE } from "../../src/sql/db.ts";
 import { workerFixture } from "./worker-support.ts";
 
-for (const primary of ["Session", "resolve"] as const)
+for (const primary of ["Session", "resolve"] as const) {
   it(`${primary} failure stays primary when writer close also fails`, async () => {
-    const cause = Error(`${primary} cause`),
-      closeFailure = Error("storage close failed");
+    const cause = new Error(`${primary} cause`);
+    const closeFailure = new Error("storage close failed");
     let armed = false;
     const f = await workerFixture("worker_close_cause", false, async (phase, sql) => {
       if (armed && phase === "before" && sql === BEGIN_WRITE) {
@@ -17,11 +17,11 @@ for (const primary of ["Session", "resolve"] as const)
       }
     });
     const open = f.backend.openStorage;
-    let closes = 0,
-      storageClosed = false;
+    let closes = 0;
+    let storageClosed = false;
     f.backend.openStorage = async (lease) => {
-      const storage = await open(lease),
-        close = storage.close.bind(storage);
+      const storage = await open(lease);
+      const close = storage.close.bind(storage);
       storage.close = async (c) => {
         closes++;
         await close(c);
@@ -30,9 +30,10 @@ for (const primary of ["Session", "resolve"] as const)
       };
       return storage;
     };
-    let harness: Harness | undefined, root: Conversation | undefined;
-    let polls = 0,
-      joinedAtError = false;
+    let harness: Harness | undefined;
+    let root: Conversation | undefined;
+    let polls = 0;
+    let joinedAtError = false;
     const events: string[] = [];
     const ports: WorkerDependencies = {
       ...f.deps,
@@ -46,8 +47,8 @@ for (const primary of ["Session", "resolve"] as const)
         return f.deps.resolve(item);
       },
       async connectAuthority() {
-        const authority = await f.deps.connectAuthority(),
-          hasWork = authority.hasWork.bind(authority);
+        const authority = await f.deps.connectAuthority();
+        const hasWork = authority.hasWork.bind(authority);
         authority.hasWork = async (ns) => {
           // Fail actual Pi while the post-admission poll holds the worker outside its ended guard.
           if (++polls === 2 && primary === "Session") {
@@ -66,7 +67,7 @@ for (const primary of ["Session", "resolve"] as const)
         events.push(name);
         if (["closing", "closed", "worker-error"].includes(name)) {
           if (name === "worker-error") joinedAtError = storageClosed;
-          throw Error("observer failure must not change the outcome");
+          throw new Error("observer failure must not change the outcome");
         }
       },
     };
@@ -89,3 +90,4 @@ for (const primary of ["Session", "resolve"] as const)
       await f.finish();
     }
   });
+}

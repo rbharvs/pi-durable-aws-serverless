@@ -3,10 +3,10 @@ import { apiHandler } from "./submit.ts";
 import { canonical, MAX_BLOCKS } from "./input.ts";
 
 it("closes authority before advisory wake, but still awaits wake completion", async () => {
-  const entered = Promise.withResolvers<void>(),
-    wake = Promise.withResolvers<void>();
-  let closes = 0,
-    settled = false;
+  const entered = Promise.withResolvers<void>();
+  const wake = Promise.withResolvers<void>();
+  let closes = 0;
+  let settled = false;
   const run = apiHandler({
     connectAuthority: async () => ({
       get: async () => undefined,

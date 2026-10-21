@@ -24,14 +24,15 @@ it("uses C ordering and database millisecond units", async () => {
 });
 
 it("uses the full 63-character schema name on PostgreSQL without truncation or equal-prefix aliasing", async () => {
-  const schema = "s".repeat(63),
-    client = await configuredProvider(schema).connect();
+  const schema = "s".repeat(63);
+  const client = await configuredProvider(schema).connect();
 
   try {
     await client.query(`CREATE SCHEMA "${schema}"`);
     expect((await client.query("SELECT current_schema() AS schema")).rows[0].schema).toBe(schema);
-    for (const suffix of ["a", "b"])
+    for (const suffix of ["a", "b"]) {
       expect(() => configuredProvider(schema + suffix)).toThrow("Invalid schema identifier");
+    }
   } finally {
     try {
       await client.query(`DROP SCHEMA "${schema}" CASCADE`);

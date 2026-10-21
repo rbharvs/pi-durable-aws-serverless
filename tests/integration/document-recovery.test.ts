@@ -7,7 +7,7 @@ import { context, conversation } from "./history-support.ts";
 import { documentFixture } from "./document-support.ts";
 import { task } from "./task-support.ts";
 
-for (const count of [120, 334])
+for (const count of [120, 334]) {
   it(`actual Harness cold recovery of ${count} running tasks is ${count === 120 ? "atomic and durable" : "rejected before publication"}`, async () => {
     const f = await documentFixture("pi_recovery");
     try {
@@ -21,7 +21,9 @@ for (const count of [120, 334])
           input: { text: `${i}:` + "x".repeat(48 * 1024) },
         },
       }));
-      for (let i = 0; i < count; i += 100) await storage.commit(writes.slice(i, i + 100), context);
+      for (let i = 0; i < count; i += 100) {
+        await storage.commit(writes.slice(i, i + 100), context);
+      }
       await storage.close(context);
       const before = await f.snapshot();
       const puts = f.memory.operations.filter((op) => op.operation === "PUT").length;
@@ -64,3 +66,4 @@ for (const count of [120, 334])
       await f.finish();
     }
   });
+}

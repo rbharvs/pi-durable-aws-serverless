@@ -14,10 +14,11 @@ it("receipts require identity, payload, hash and time and reject replacement or 
     await store.authority.receive(store.ns, requestId("inline"), acceptedInput(plain));
     const before = await store.inbox();
 
-    for (const column of ["ns", "request_id", "payload_sha256", "payload_kind", "received_at"])
+    for (const column of ["ns", "request_id", "payload_sha256", "payload_kind", "received_at"]) {
       await expect(
         db.query(`UPDATE inbox SET ${column}=NULL WHERE ns=$1`, [store.ns]),
       ).rejects.toMatchObject({ code: "23502" });
+    }
     await expect(
       db.query("UPDATE inbox SET json=NULL WHERE ns=$1", [store.ns]),
     ).rejects.toMatchObject({ code: "23514" });

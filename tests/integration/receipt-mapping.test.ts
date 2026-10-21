@@ -120,12 +120,13 @@ it("bounds and orders received receipts, excludes mapped ones, and isolates mapp
     await expect(f.authority.markAdmitted(first, submissionId(30))).rejects.toThrow("missing");
     await f.storage.commit([submission(30)], context);
     await f.authority.markAdmitted(first, submissionId(30));
-    for (let n = 9; n >= 0; n--)
+    for (let n = 9; n >= 0; n--) {
       await f.authority.receive(
         f.ns,
         requestId(`request-${n}`),
         acceptedInput({ content: "x", whenBusy: "followUp" }),
       );
+    }
     await f.control.query(
       "UPDATE inbox SET received_at=123 WHERE ns=$1 AND request_id<>'fixture'",
       [f.ns],
@@ -145,14 +146,16 @@ it("bounds and orders received receipts, excludes mapped ones, and isolates mapp
       ],
       context,
     );
-    for (const received of await f.authority.received(f.ns))
+    for (const received of await f.authority.received(f.ns)) {
       await f.authority.markAdmitted(received, submissionId(30));
+    }
     expect((await f.authority.received(f.ns)).map((r) => r.request)).toEqual([
       "request-8",
       "request-9",
     ]);
-    for (const received of await f.authority.received(f.ns))
+    for (const received of await f.authority.received(f.ns)) {
       await f.authority.markAdmitted(received, submissionId(30));
+    }
     expect(await f.authority.hasWork(f.ns)).toBe(false);
     expect(await other.authority.hasWork(other.ns)).toBe(true);
   } finally {
@@ -218,7 +221,7 @@ it("observes receipts, every live task state and queued/placed submissions in on
   }
 });
 
-for (const phase of ["confirmed-abort", "unknown-before", "unknown-after"] as const)
+for (const phase of ["confirmed-abort", "unknown-before", "unknown-after"] as const) {
   it(`mapping handles ${phase} without inventing an acknowledgement`, async () => {
     const f = await historyFixture("mapping_ack");
     let injected = false;
@@ -227,12 +230,13 @@ for (const phase of ["confirmed-abort", "unknown-before", "unknown-after"] as co
         injected ||
         !sql.startsWith("UPDATE inbox SET submission_id=") ||
         at !== (phase === "unknown-after" ? "after" : "before")
-      )
+      ) {
         return;
+      }
       injected = true;
       throw phase === "confirmed-abort"
         ? confirmedAbort()
-        : Error("unknown mapping acknowledgement");
+        : new Error("unknown mapping acknowledgement");
     });
     try {
       const received = await fixtureReceipt(f);
@@ -256,8 +260,9 @@ for (const phase of ["confirmed-abort", "unknown-before", "unknown-after"] as co
       await Promise.all([actor.authority.close(), f.finish()]);
     }
   });
+}
 
-for (const invalid of [0, -1, 9007199254740992])
+for (const invalid of [0, -1, 9007199254740992]) {
   it(`classifies invalid stored mapped identity ${invalid} as corruption`, async () => {
     const f = await historyFixture("mapping_corrupt");
     try {
@@ -272,3 +277,4 @@ for (const invalid of [0, -1, 9007199254740992])
       await f.finish();
     }
   });
+}

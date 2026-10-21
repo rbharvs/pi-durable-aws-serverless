@@ -46,7 +46,7 @@ import { assertEnvelope, EnvelopeRejected } from "../payload.ts";
 import { LIMITS } from "../limits.ts";
 import type { PayloadObjects } from "../s3-payload.ts";
 import type { Lease } from "../lease.ts";
-import { freezeWrites as freeze, storedHighWater, writeId } from "../write-bounds.ts";
+import { freezeWrites, storedHighWater, writeId } from "../write-bounds.ts";
 import {
   writeShape,
   validateRecord,
@@ -63,21 +63,26 @@ import { check, integer, computeSha256, Mutex, sleep } from "../domain.ts";
 
 type StoredTask = Records["task"];
 
-type Mutation = { sql: string; params: SqlValue[]; payload: PayloadInput };
+interface Mutation {
+  sql: string;
+  params: SqlValue[];
+  payload: PayloadInput;
+}
 
-type DocumentAction = {
+interface DocumentAction {
   create?: DocumentCreate;
   copy?: { id: DocumentId; at: DocumentPoint };
   content?: DocumentContent;
   retire: boolean;
-};
+}
 
 type AdapterState = "open" | "failed" | "closed";
 
 /** Selectors are safe numbers, including empty/negative bounds; never coerce decimal strings. */
 function assertSafeInteger(value: unknown): asserts value is number {
-  if (typeof value !== "number" || !Number.isSafeInteger(value))
+  if (typeof value !== "number" || !Number.isSafeInteger(value)) {
     throw new StorageRequestError("Expected safe integer number");
+  }
 }
 
 /** Only allocation/sequence heads may contain the exact exhausted sentinel. */
@@ -150,10 +155,10 @@ export class SqlStorage implements Storage {
       if (!read) return fn();
 
       try {
-        await this.q(BEGIN_READ);
+        await this.query(BEGIN_READ);
         const result = await fn();
 
-        await this.q("COMMIT");
+        await this.query("COMMIT");
 
         return result;
       } catch (error) {
@@ -166,7 +171,7 @@ export class SqlStorage implements Storage {
 
   private async rollback(original?: unknown): Promise<void> {
     try {
-      await this.q("ROLLBACK");
+      await this.query("ROLLBACK");
     } catch (error) {
       this.state = "failed";
 
@@ -176,7 +181,7 @@ export class SqlStorage implements Storage {
     }
   }
 
-  private q(sql: string, params: readonly SqlValue[] = []): Promise<Row[]> {
+  private query(sql: string, params: readonly SqlValue[] = []): Promise<Row[]> {
     return this.db.query(sql, params);
   }
 
@@ -197,7 +202,7 @@ export class SqlStorage implements Storage {
   private async get<K extends RecordType>(type: K, id: number): Promise<Records[K] | undefined> {
     assertSafeInteger(id);
     const row = (
-      await this.q(
+      await this.query(
         `SELECT ${projection("records")} FROM records WHERE ns=$1 AND id=$2 AND type=$3`,
         [this.lease.ns, id, type],
       )
@@ -222,13 +227,15 @@ export class SqlStorage implements Storage {
     clauses.push(`id ${order === "ascending" ? ">" : "<"} $${values.length}`);
     values.push(limit + 1);
 
-    const rows = await this.q(
+    const rows = await this.query(
       `SELECT ${projection("records")} FROM records WHERE ns=$1 AND type=$2 AND ${clauses.join(" AND ")} ORDER BY id ${order === "ascending" ? "ASC" : "DESC"} LIMIT $${values.length}`,
       values,
     );
-    const records: Records[K][] = [];
+    const records: Array<Records[K]> = [];
 
-    for (const row of rows) records.push(await this.decode(row, type));
+    for (const row of rows) {
+      records.push(await this.decode(row, type));
+    }
 
     return page(records, limit, order);
   }
@@ -239,7 +246,7 @@ export class SqlStorage implements Storage {
         try {
           // Autocommit: never expose a candidate before the durable head acknowledges it.
           // bigint arithmetic preserves MAX_SAFE + 1 exactly; mint does not advance record seq.
-          const rows = await this.q(
+          const rows = await this.query(
             `UPDATE harness SET next_id=next_id+1
              WHERE ns=$1 AND epoch=$2 AND owner=$3 AND next_seq=$4 AND next_id <= $5::bigint
              RETURNING next_id-1 AS id`,
@@ -267,7 +274,7 @@ export class SqlStorage implements Storage {
         }
 
         const head = (
-          await this.q("SELECT epoch,owner,next_seq,next_id FROM harness WHERE ns=$1", [
+          await this.query("SELECT epoch,owner,next_seq,next_id FROM harness WHERE ns=$1", [
             this.lease.ns,
           ])
         )[0];
@@ -389,7 +396,7 @@ export class SqlStorage implements Storage {
   ): Promise<SubmissionRecord | undefined> {
     return this.run(async () => {
       assertSafeInteger(conversationId);
-      const rows = await this.q(
+      const rows = await this.query(
         `SELECT ${projection("records")} FROM records WHERE ns=$1 AND type='submission' AND conversation_id=$2 AND request_hash=$3`,
         [this.lease.ns, conversationId, computeSha256(JSON.stringify(requestId))],
       );
@@ -403,8 +410,8 @@ export class SqlStorage implements Storage {
 
   private async chain(
     id: ConversationId,
-  ): Promise<{ record: ConversationRecord; upper: number }[]> {
-    const chain: { record: ConversationRecord; upper: number }[] = [];
+  ): Promise<Array<{ record: ConversationRecord; upper: number }>> {
+    const chain: Array<{ record: ConversationRecord; upper: number }> = [];
     let upper = Number.MAX_SAFE_INTEGER;
     const seen = new Set<number>();
 
@@ -444,7 +451,7 @@ export class SqlStorage implements Storage {
       const chain =
         third === undefined ? undefined : await this.chain(idFromNumber<ConversationId>(first));
       const row = (
-        await this.q(
+        await this.query(
           `SELECT ${projection("records")} FROM records WHERE ns=$1 AND type='entry' AND id=$2`,
           [this.lease.ns, id],
         )
@@ -454,8 +461,12 @@ export class SqlStorage implements Storage {
 
       const entry = await this.decode(row, "entry");
 
-      if (chain && !chain.some((s) => s.record.id === entry.conversationId && entry.id <= s.upper))
+      if (
+        chain &&
+        !chain.some((s) => s.record.id === entry.conversationId && entry.id <= s.upper)
+      ) {
         return undefined;
+      }
 
       return { entry, commitSeq: seqFromNumber(integer(row.commit_seq)) };
     });
@@ -490,12 +501,14 @@ export class SqlStorage implements Storage {
           maxEntryId ?? Number.MAX_SAFE_INTEGER,
           order === "descending" && after !== undefined ? after - 1 : Number.MAX_SAFE_INTEGER,
         );
-        const rows = await this.q(
+        const rows = await this.query(
           `SELECT ${projection("records")} FROM records WHERE ns=$1 AND type='entry' AND conversation_id=$2 AND id >= $3 AND id <= $4 ORDER BY id ${order === "ascending" ? "ASC" : "DESC"} LIMIT $5`,
           [this.lease.ns, segment.record.id, lower, upper, limit + 1 - records.length],
         );
 
-        for (const row of rows) records.push(await this.decode(row, "entry"));
+        for (const row of rows) {
+          records.push(await this.decode(row, "entry"));
+        }
         if (records.length > limit) break;
       }
 
@@ -512,7 +525,7 @@ export class SqlStorage implements Storage {
       if (cutoff !== undefined) assertSafeInteger(cutoff);
       for (const segment of await this.chain(id)) {
         const row = (
-          await this.q(
+          await this.query(
             `SELECT ${projection("records")} FROM records WHERE ns=$1 AND type='entry' AND conversation_id=$2 AND has_head=true AND id<=$3 ORDER BY id DESC LIMIT 1`,
             [
               this.lease.ns,
@@ -541,7 +554,7 @@ export class SqlStorage implements Storage {
   ): Promise<DocumentRecord | undefined> {
     if (at !== "current") assertSafeInteger(at);
     assertSafeInteger(scope(address.scope)[1]);
-    const rows = await this.q(
+    const rows = await this.query(
       `SELECT ${projection("records")} FROM records WHERE ns=$1 AND type='document' AND address_hash=$2 AND created_at<=$3 AND (retired_at IS NULL OR retired_at>$4) ORDER BY created_at DESC`,
       [
         this.lease.ns,
@@ -558,8 +571,9 @@ export class SqlStorage implements Storage {
         record.kind === address.kind &&
         record.key === address.key &&
         JSON.stringify(scope(record.scope)) === JSON.stringify(scope(address.scope))
-      )
+      ) {
         return record;
+      }
     }
 
     return undefined;
@@ -613,14 +627,15 @@ export class SqlStorage implements Storage {
     const record = await this.get("document", id);
 
     if (!record) return undefined;
-    if (at !== "current" && currentOnly(record))
+    if (at !== "current" && currentOnly(record)) {
       throw new StorageRequestError(`Document ${id} does not retain historical content`);
+    }
     if (!alive(record, at)) return undefined;
 
     try {
       const upper = at === "current" ? Number.MAX_SAFE_INTEGER : at;
       const base = (
-        await this.q(
+        await this.query(
           `SELECT ${projection("revisions")} FROM revisions WHERE ns=$1 AND document_id=$2 AND kind='base' AND seq<=$3 ORDER BY seq DESC LIMIT 1`,
           [this.lease.ns, id, upper],
         )
@@ -635,7 +650,7 @@ export class SqlStorage implements Storage {
           await this.payloads.decode(base, `${this.lease.ns}/revisions/${id}/${String(base.seq)}`),
         ),
       );
-      const tail = await this.q(
+      const tail = await this.query(
         `SELECT ${projection("revisions")} FROM revisions WHERE ns=$1 AND document_id=$2 AND seq>$3 AND seq<=$4 ORDER BY seq`,
         [this.lease.ns, id, integer(base.seq), upper],
       );
@@ -812,8 +827,9 @@ export class SqlStorage implements Storage {
           !action.content && !action.copy && !action.create,
           `Document ${id} has more than one content command`,
         );
-        if (write.type === "document.create" || write.type === "document.copy")
+        if (write.type === "document.create" || write.type === "document.copy") {
           action.create = write.record;
+        }
         if (write.type === "document.copy") action.copy = write.source;
         else action.content = write.content;
       }
@@ -829,8 +845,9 @@ export class SqlStorage implements Storage {
       // Count each serialized owner payload once, including resolved copies and repeated writes.
       // Reject incrementally before retaining the rest of the batch or publishing any objects.
       logicalBytes += Buffer.byteLength(mutation.payload.json);
-      if (logicalBytes > LIMITS.maxLogicalCommitBytes)
+      if (logicalBytes > LIMITS.maxLogicalCommitBytes) {
         throw new EnvelopeRejected("Resolved logical commit exceeds 32 MiB bound");
+      }
       mutations.push(mutation);
     };
     const existing = await this.validateRecordWrites(writes, seq, addMutation);
@@ -850,11 +867,13 @@ export class SqlStorage implements Storage {
     const existing = new Map<number, Row>();
     if (ids.length > 0) {
       const placeholders = ids.map((_, i) => `$${i + 2}`).join(",");
-      const rows = await this.q(
+      const rows = await this.query(
         `SELECT ${referenceProjection("records")} FROM records WHERE ns=$1 AND id IN (${placeholders}) ORDER BY id`,
         [this.lease.ns, ...ids],
       );
-      for (const row of rows) existing.set(integer(row.id), row);
+      for (const row of rows) {
+        existing.set(integer(row.id), row);
+      }
     }
     const claimed = new Map<number, RecordType>();
     for (const write of writes) {
@@ -906,7 +925,7 @@ export class SqlStorage implements Storage {
 
       if (action.content?.kind === "delta") {
         const previous = (
-          await this.q(
+          await this.query(
             "SELECT version FROM revisions WHERE ns=$1 AND document_id=$2 ORDER BY seq DESC LIMIT 1",
             [this.lease.ns, id],
           )
@@ -939,8 +958,9 @@ export class SqlStorage implements Storage {
       liveCounts.set(key, live);
     }
 
-    for (const count of liveCounts.values())
+    for (const count of liveCounts.values()) {
       check(count <= 1, "Document address already has a current incarnation");
+    }
 
     return documents;
   }
@@ -980,7 +1000,7 @@ export class SqlStorage implements Storage {
         }
       }
 
-      if (action.create || action.retire)
+      if (action.create || action.retire) {
         addMutation(
           this.recordMutation(
             {
@@ -991,7 +1011,8 @@ export class SqlStorage implements Storage {
             existing.get(id),
           ),
         );
-      if (content)
+      }
+      if (content) {
         addMutation({
           sql: `INSERT INTO revisions(ns,document_id,seq,kind,version,${PAYLOAD_COLUMNS.join(",")}) VALUES($1,$2,$3,$4,$5,${PAYLOAD_COLUMNS.map((_, i) => `$${i + 6}`).join(",")})`,
           params: [this.lease.ns, id, seq, content.kind, content.version],
@@ -1002,6 +1023,7 @@ export class SqlStorage implements Storage {
             json: JSON.stringify(content.kind === "base" ? content.value : content.ops),
           },
         });
+      }
       // Retain old revisions rather than an unbounded DELETE. Reads select the most recent base.
     }
   }
@@ -1010,10 +1032,10 @@ export class SqlStorage implements Storage {
     // One snapshot plus the next_seq fence protects all prepared results.
     // Uploads never run inside a DB transaction.
     try {
-      await this.q(BEGIN_READ);
+      await this.query(BEGIN_READ);
       const mutations = await this.prepare(frozen, seq);
 
-      await this.q("COMMIT");
+      await this.query("COMMIT");
 
       return mutations;
     } catch (error) {
@@ -1061,7 +1083,7 @@ export class SqlStorage implements Storage {
 
   /** Only this frozen batch is retried. Unknown COMMIT never becomes a rollback claim. */
   private async publishFrozen(
-    statements: readonly { readonly sql: string; readonly params: readonly SqlValue[] }[],
+    statements: ReadonlyArray<{ readonly sql: string; readonly params: readonly SqlValue[] }>,
     nextId: number,
     seq: Seq,
   ): Promise<Seq> {
@@ -1069,9 +1091,9 @@ export class SqlStorage implements Storage {
       let commitSent = false;
 
       try {
-        await this.q(BEGIN_WRITE);
+        await this.query(BEGIN_WRITE);
 
-        const fence = await this.q(
+        const fence = await this.query(
           `UPDATE harness SET next_seq=next_seq+1,next_id=GREATEST(next_id,$5)
                  WHERE ns=$1 AND epoch=$2 AND owner=$3 AND next_seq=$4 RETURNING next_seq`,
           [this.lease.ns, this.lease.epoch, this.lease.owner, this.nextSeq, nextId],
@@ -1081,9 +1103,11 @@ export class SqlStorage implements Storage {
           this.state = "failed";
           throw new Error("Stale owner epoch or sequence");
         }
-        for (const statement of statements) await this.q(statement.sql, statement.params);
+        for (const statement of statements) {
+          await this.query(statement.sql, statement.params);
+        }
         commitSent = true;
-        await this.q("COMMIT");
+        await this.query("COMMIT");
         this.nextSeq++;
 
         return seq;
@@ -1105,10 +1129,10 @@ export class SqlStorage implements Storage {
 
   /** Detach and validate at invocation, before the serialized operation's first await. */
   async commit(writes: readonly StorageWrite[], _context: Context): Promise<Seq> {
-    const frozen = freeze(writes);
+    const frozen = freezeWrites(writes);
     for (const write of frozen) {
       try {
-        // freeze() normalized the exact JSON used by index/ID accounting and publication.
+        // freezeWrites() normalized the exact JSON used by index/ID accounting and publication.
         writeShape(write);
       } catch (error) {
         throw new StorageRequestError(`Invalid ${String(write?.type)} write: ${String(error)}`);

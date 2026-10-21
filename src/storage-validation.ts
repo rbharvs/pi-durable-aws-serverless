@@ -13,7 +13,9 @@ export function assertJson(value: unknown): asserts value is JsonValue {
   }
 
   check(typeof value === "object", "Not a JSON value");
-  for (const item of Object.values(value)) assertJson(item);
+  for (const item of Object.values(value)) {
+    assertJson(item);
+  }
 }
 
 export function jsonObject(value: unknown): { [key: string]: JsonValue } {
@@ -37,86 +39,94 @@ function jsonPoint(value: unknown): asserts value is number {
   );
 }
 
-function absent(v: Record<string, unknown>, ...names: string[]): void {
-  for (const name of names) check(v[name] === undefined, `Unexpected ${name}`);
+function absent(record: Record<string, unknown>, ...names: string[]): void {
+  for (const name of names) {
+    check(record[name] === undefined, `Unexpected ${name}`);
+  }
 }
 
 /** Pi trusts record semantics. At the adapter boundary validate the storage envelope and state shapes. */
 export function recordShape(value: unknown, type: string): void {
-  const v = object(value);
+  const record = object(value);
 
-  assertJson(v);
-  jsonId(v.id);
+  assertJson(record);
+  jsonId(record.id);
 
   if (type === "conversation") {
-    for (const key of ["owner", "parent"])
-      if (v[key] !== undefined) {
-        const edge = object(v[key]);
+    for (const key of ["owner", "parent"]) {
+      if (record[key] !== undefined) {
+        const edge = object(record[key]);
 
         jsonId(edge.conversationId);
         if (key === "owner") jsonId(edge.taskId);
         else jsonPoint(edge.at);
       }
+    }
 
     return;
   }
 
   if (type === "document") {
-    const s = object(v.scope);
+    const scope = object(record.scope);
 
-    check(["session", "conversation", "task"].includes(text(s.kind)), "Invalid document scope");
-    jsonPoint(v.createdAt);
-    if (v.retiredAt !== undefined) {
-      jsonPoint(v.retiredAt);
-      check(v.retiredAt >= v.createdAt, "Invalid document lifetime");
+    check(["session", "conversation", "task"].includes(text(scope.kind)), "Invalid document scope");
+    jsonPoint(record.createdAt);
+    if (record.retiredAt !== undefined) {
+      jsonPoint(record.retiredAt);
+      check(record.retiredAt >= record.createdAt, "Invalid document lifetime");
     }
-    text(v.kind);
-    if (v.key !== undefined) text(v.key);
+    text(record.kind);
+    if (record.key !== undefined) text(record.key);
 
-    if (s.kind === "conversation") {
-      jsonId(s.conversationId);
-      check(v.history === "latest" || v.history === "rewindable", "Invalid document history");
+    if (scope.kind === "conversation") {
+      jsonId(scope.conversationId);
       check(
-        ["current", "initial", ...(v.history === "rewindable" ? ["asOf"] : [])].includes(
-          text(v.fork),
+        record.history === "latest" || record.history === "rewindable",
+        "Invalid document history",
+      );
+      check(
+        ["current", "initial", ...(record.history === "rewindable" ? ["asOf"] : [])].includes(
+          text(record.fork),
         ),
         "Invalid document fork",
       );
     } else {
-      absent(v, "history", "fork");
-      if (s.kind === "task") jsonId(s.taskId);
+      absent(record, "history", "fork");
+      if (scope.kind === "task") jsonId(scope.taskId);
     }
 
     return;
   }
 
-  jsonId(v.conversationId);
+  jsonId(record.conversationId);
 
   if (type === "entry") {
-    text(v.kind);
-    if (v.head !== undefined) jsonPoint(v.head);
-    if (v.byTaskId !== undefined) jsonId(v.byTaskId);
+    text(record.kind);
+    if (record.head !== undefined) jsonPoint(record.head);
+    if (record.byTaskId !== undefined) jsonId(record.byTaskId);
 
     // Message bodies are Pi/provider-owned JSON. Validate container/role, not provider-specific content.
-    if (v.model !== undefined) {
-      check(Array.isArray(v.model), "Invalid model messages");
-      for (const message of v.model)
+    if (record.model !== undefined) {
+      check(Array.isArray(record.model), "Invalid model messages");
+      for (const message of record.model) {
         check(
           ["system", "user", "assistant", "toolResult"].includes(text(object(message).role)),
           "Invalid message role",
         );
+      }
     }
 
-    if (v.edits !== undefined) {
-      check(Array.isArray(v.edits), "Invalid context edits");
+    if (record.edits !== undefined) {
+      check(Array.isArray(record.edits), "Invalid context edits");
 
-      for (const item of v.edits) {
+      for (const item of record.edits) {
         const edit = object(item);
 
         integer(edit.target);
         if (edit.action === "omit") absent(edit, "messages");
-        else
+        else {
           check(edit.action === "replace" && Array.isArray(edit.messages), "Invalid context edit");
+        }
       }
     }
 
@@ -124,20 +134,25 @@ export function recordShape(value: unknown, type: string): void {
   }
 
   if (type === "task") {
-    text(v.kind);
-    jsonNumber(v.version);
-    // Pi omits void input during its JSON copy; present values were checked by assertJson(v).
+    text(record.kind);
+    jsonNumber(record.version);
+    // Pi omits void input during its JSON copy; present values were checked by assertJson(record).
     check(
-      typeof v.background === "boolean" && typeof v.abortRequested === "boolean",
+      typeof record.background === "boolean" && typeof record.abortRequested === "boolean",
       "Invalid task flags",
     );
-    if (v.owner !== undefined) jsonId(v.owner);
-    for (const key of ["startedAt", "endedAt"]) if (v[key] !== undefined) jsonNumber(v[key]);
-    if (v.abortReason !== undefined) check(v.abortReason === "restart", "Invalid abort reason");
-    if (v.abandonOnRestart !== undefined)
-      check(v.abandonOnRestart === true, "Invalid abandon flag");
+    if (record.owner !== undefined) jsonId(record.owner);
+    for (const key of ["startedAt", "endedAt"]) {
+      if (record[key] !== undefined) jsonNumber(record[key]);
+    }
+    if (record.abortReason !== undefined) {
+      check(record.abortReason === "restart", "Invalid abort reason");
+    }
+    if (record.abandonOnRestart !== undefined) {
+      check(record.abandonOnRestart === true, "Invalid abandon flag");
+    }
 
-    const state = object(v.state);
+    const state = object(record.state);
     switch (state.status) {
       case "pending":
       case "running":
@@ -146,22 +161,24 @@ export function recordShape(value: unknown, type: string): void {
         absent(state, "outcome");
         if (state.status === "waiting") {
           check(Array.isArray(state.on), "Invalid waiting tasks");
-          for (const id of state.on) jsonId(id);
+          for (const id of state.on) {
+            jsonId(id);
+          }
           check(
             state.policy === "failFast" || state.policy === "allSettled",
             "Invalid join policy",
           );
         }
-        if (v.memos !== undefined) object(v.memos);
+        if (record.memos !== undefined) object(record.memos);
         break;
       case "completing":
       case "terminal": {
         absent(state, "checkpoint");
-        absent(v, "memos");
+        absent(record, "memos");
         const outcome = object(state.outcome);
         switch (outcome.status) {
           case "completed":
-            // A void result is omitted by Pi. Present results already passed assertJson(v).
+            // A void result is omitted by Pi. Present results already passed assertJson(record).
             absent(outcome, "error", "reason");
             break;
           case "failed":
@@ -189,29 +206,32 @@ export function recordShape(value: unknown, type: string): void {
     return;
   }
 
-  check(type === "submission" && (v.type === "input" || v.type === "write"), "Invalid record type");
-  if (v.requestId !== undefined) text(v.requestId);
-  switch (v.status) {
+  check(
+    type === "submission" && (record.type === "input" || record.type === "write"),
+    "Invalid record type",
+  );
+  if (record.requestId !== undefined) text(record.requestId);
+  switch (record.status) {
     case "queued":
-      absent(v, "entry", "answer", "reason", "detail");
+      absent(record, "entry", "answer", "reason", "detail");
       break;
     case "placed":
-      check(v.type === "input", "Write cannot be placed");
-      jsonId(v.entry);
-      absent(v, "answer", "reason", "detail");
+      check(record.type === "input", "Write cannot be placed");
+      jsonId(record.entry);
+      absent(record, "answer", "reason", "detail");
       break;
     case "done":
-      jsonId(v.entry);
-      if (v.type === "input") jsonId(v.answer);
-      else absent(v, "answer");
-      absent(v, "reason", "detail");
+      jsonId(record.entry);
+      if (record.type === "input") jsonId(record.answer);
+      else absent(record, "answer");
+      absent(record, "reason", "detail");
       break;
     case "unanswered":
-      text(v.reason);
-      absent(v, "answer");
-      if (v.type === "input") {
-        if (v.entry !== undefined) jsonId(v.entry);
-      } else absent(v, "entry");
+      text(record.reason);
+      absent(record, "answer");
+      if (record.type === "input") {
+        if (record.entry !== undefined) jsonId(record.entry);
+      } else absent(record, "entry");
       break;
     default:
       throw new Error("Invalid submission status");
@@ -256,6 +276,8 @@ export function writeShape(write: StorageWrite): void {
       write.content.kind === "delta" && Array.isArray(write.content.ops),
       "Invalid document content",
     );
-    for (const op of write.content.ops) assertValidOp(op);
+    for (const op of write.content.ops) {
+      assertValidOp(op);
+    }
   }
 }
