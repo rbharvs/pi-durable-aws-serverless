@@ -6,9 +6,13 @@
     "check": "oxlint --deny-warnings . && oxfmt --check . && tsc --noEmit",
     "test": "vitest run --config vitest.config.ts",
     "test:integration": "vitest run --config vitest.integration.config.ts",
-    "format": "oxfmt ."
+    "format": "oxfmt .",
+    "build": "node build.mjs"
   },
   "dependencies": {
+    "@aws-sdk/client-lambda": "3.1152.0",
+    "@aws-sdk/client-s3": "3.1152.0",
+    "@aws-sdk/dsql-signer": "3.1152.0",
     "@earendil-works/chord": "1.3.0",
     "@earendil-works/pi-ai": "1.3.0",
     "@earendil-works/pi-durable": "1.3.0",
@@ -17,6 +21,7 @@
   "devDependencies": {
     "@types/node": "24.19.2",
     "@types/pg": "8.15.6",
+    "esbuild": "0.28.2",
     "oxfmt": "0.73.0",
     "oxlint": "1.88.0",
     "typescript": "7.0.2",

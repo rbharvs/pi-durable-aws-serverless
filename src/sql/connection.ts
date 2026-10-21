@@ -16,7 +16,13 @@ export async function connect(config: pg.ClientConfig, schema: string): Promise<
   const quotedSchema = schemaIdentifier(schema);
   const client = new pg.Client({ connectionTimeoutMillis: 15000, query_timeout: 25000, ...config });
 
-  client.on("error", (error) => console.error("pg-socket", error.name));
+  client.on("error", () => {
+    try {
+      console.error("pg-socket", "Error");
+    } catch {
+      // A diagnostic sink must not turn an idle socket error into an uncaught exception.
+    }
+  });
 
   try {
     await client.connect();

@@ -130,7 +130,7 @@ export async function worker(
   } catch (error) {
     emit(event, "worker-error", {
       ns,
-      cause: error instanceof Error ? error.name : "unknown",
+      cause: error instanceof Error ? "Error" : "unknown",
     });
 
     throw error;

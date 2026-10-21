@@ -17,8 +17,9 @@ export class ObjectInvalid extends Error {
  * `getStaged` returns the raw object bytes. It throws ObjectInvalid only for a confirmed missing
  * object; ambiguous authorization or transport failures throw other errors. A truncated transfer
  * must throw rather than end the body, or the caller reports invalid content. The caller verifies
- * the declared byte count and SHA-256 and may stop early through the iterator's `return()`, which
- * must release the transport (Node.js `Readable` streams do).
+ * the declared byte count and SHA-256, using readAtMost to bound total bytes rather than trusting
+ * response metadata. Early iterator `return()` must release the transport (Node.js `Readable`
+ * streams do). The adapter need not duplicate this aggregate byte count.
  *
  * `put` creates a new `p/<ns>/<UUID-v4>` object from validated canonical JSON without overwriting
  * any object. It resolves only after durable publication with a confirmed checksum. Published

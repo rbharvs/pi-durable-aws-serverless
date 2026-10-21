@@ -12,11 +12,12 @@ export interface PayloadObjects {
 }
 
 export function objectSize(json: string): number {
-  const bytes = Buffer.byteLength(jsonText(json));
+  const bytes = Buffer.byteLength(json);
 
   if (bytes > LIMITS.maxObjectBytes)
     throw new EnvelopeRejected(`Object exceeds ${LIMITS.maxObjectBytes} bytes: ${bytes}`);
 
+  jsonText(json);
   return bytes;
 }
 
