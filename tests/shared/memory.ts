@@ -2,6 +2,7 @@ import { createMemoryBackend } from "../../src/index.ts";
 import { harnessId, requestId, check } from "../../src/domain.ts";
 import { input, publishSubmission, type ContractFixture } from "./storage.contract.ts";
 import { idFromNumber } from "../../src/ids.ts";
+import { LEASE_MARGIN_MS } from "../../src/lease.ts";
 
 export async function memoryFixture(
   idle = false,
@@ -24,6 +25,20 @@ export async function memoryFixture(
     lease: claim.lease,
     firstId: idle ? 3 : 2,
     orderingTies: async () => {},
+    setExpiredLeases: async (expiries) => {
+      // Issue real public claims at one controlled time, then expire every claim.
+      const at = Math.min(...expiries.map((l) => l.until)) - LEASE_MARGIN_MS - 1;
+      check(at >= time, "Expiry setup must advance the fixture clock");
+      time = at;
+      const actual = [];
+      for (const { ns, until } of expiries) {
+        const claimed = await authority.claim(ns, until - time - LEASE_MARGIN_MS);
+        check(claimed.kind === "claimed", "fixture expiry claim");
+        actual.push({ ns: claimed.lease.ns, until: claimed.lease.until });
+      }
+      time = Math.max(...actual.map((l) => l.until)) + 1;
+      return actual;
+    },
     advanceAuthorityClock: async (ms) => {
       time += ms;
     },
