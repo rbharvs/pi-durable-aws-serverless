@@ -2,7 +2,10 @@
 
 An example of [`@earendil-works/pi-durable`](https://www.npmjs.com/package/@earendil-works/pi-durable) on AWS Lambda, Aurora DSQL, and S3. It provides immutable request receipts, a real Pi worker, missed-wake reconciliation, and complete Pi 1.3.0 storage. A memory backend supports local development.
 
-The AWS adapters and handler compositions are tested offline and against local PostgreSQL, **not yet live-tested on AWS**. This repository does not provision infrastructure, authentication, or a scheduler.
+Validation includes deployed Lambda/Pi workflows and direct DSQL/S3 contracts,
+including controlled failure cases. Model fixtures are deterministic; these tests
+do not establish arbitrary-outage tolerance or exactly-once external effects.
+This repository does not provision infrastructure, authentication, or a scheduler.
 
 SQL storage persists conversations, entries, tasks, submissions, and documents, with atomic commits, document history, and forks. An internal [backend factory](src/sql/backend.ts) pairs Authority and Storage; it is not a public package API.
 
