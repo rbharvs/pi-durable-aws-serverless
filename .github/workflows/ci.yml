@@ -25,4 +25,5 @@ jobs:
       - run: nix develop --no-update-lock-file --command pnpm check
       - run: nix develop --no-update-lock-file --command pnpm test
       - run: nix develop --no-update-lock-file --command pnpm build
+      - run: nix develop --no-update-lock-file --command pnpm infra:build
       - run: nix develop --no-update-lock-file --command pnpm test:integration

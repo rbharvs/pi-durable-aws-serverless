@@ -23,6 +23,7 @@ import { ObjectInvalid, readAtMost, type CommandObjects } from "./object-data.ts
 import { type Dispatch, type Events } from "./dispatch.ts";
 import { emit, cleanup } from "./diagnostics.ts";
 import type { PayloadObjects } from "./s3-payload.ts";
+import { isSupportedModel } from "./model-selection.ts";
 
 /** Reads only durable receipt bytes, never the caller's mutable staging object. */
 export async function resolveInput(
@@ -248,7 +249,21 @@ export function apiHandler(deps: ApiDependencies) {
 
       authority = await acquireAuthority(deps);
 
-      if (canonicalInput.bytes <= MAX_INLINE_INPUT_BYTES) {
+      const model = canonicalInput.input.model;
+      if (model && !isSupportedModel(model.provider, model.modelId)) {
+        // A catalog change must not invalidate a retry of an immutable accepted receipt.
+        // Only this policy failure needs a read before rejection; malformed input was
+        // already rejected before acquiring authority. Never publish/store a new one.
+        const existing = await findReceipt(authority, ns, request);
+        if (!existing) {
+          const cause = new Error("Unsupported provider/model selection");
+          throw submission.command.kind === "inline"
+            ? new InvalidInput(cause)
+            : new StagedContentInvalid(cause);
+        }
+        if (existing.hash !== canonicalInput.sha256) throw new RequestConflict();
+        ack = { duplicate: true, item: existing };
+      } else if (canonicalInput.bytes <= MAX_INLINE_INPUT_BYTES) {
         const payload = { kind: "inline", json: canonicalInput.json } as const;
 
         ack = await storeReceipt(authority, ns, request, { hash: canonicalInput.sha256, payload });

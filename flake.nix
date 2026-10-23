@@ -16,6 +16,9 @@
               pkgs.nodejs_24
               pkgs.gitMinimal
               pkgs.pnpm_12
+              # CLI + Node host only; the SDK selects its AWS plugin on approved use.
+              (pkgs.pulumi.withPackages (ps: [ ps.pulumi-nodejs ]))
+              pkgs.awscli2
             ];
           };
         });

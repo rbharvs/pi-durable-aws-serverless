@@ -1,12 +1,13 @@
 import type { Harness, Conversation } from "@earendil-works/pi-durable";
 import type { SessionEnd } from "@earendil-works/pi-durable";
 import { BACKGROUND_CONTEXT as context } from "@earendil-works/chord/context";
-import { check, sleep, type HarnessId } from "./domain.ts";
+import { check, sleep, type HarnessId, type RequestId } from "./domain.ts";
 import { CLOSE_MARGIN_MS, type Lease } from "./lease.ts";
 import { emit, cleanup } from "./diagnostics.ts";
 import type { WorkerAuthority, Received } from "./authority.ts";
 import type { AgentInput } from "./input.ts";
 import type { Events } from "./dispatch.ts";
+import { admitInput } from "./admit.ts";
 
 /**
  * Closes opened Harness/Storage before release and the authority handle afterward in finally,
@@ -24,6 +25,8 @@ export interface WorkerDependencies {
 /** Ownership outcome, not task completion: released/idle can race with new receipts. */
 export type WorkerResult = "held" | "idle" | "released" | "lost";
 
+type PendingInput = { request: RequestId; input: AgentInput };
+
 /** Pi admission commits before monotonic mapping; recovery safely repeats the same request key. */
 async function admitPending(
   ns: HarnessId,
@@ -32,21 +35,21 @@ async function admitPending(
   remaining: () => number,
   deps: WorkerDependencies,
   event: Events,
-): Promise<void> {
+  pending: PendingInput | undefined,
+): Promise<PendingInput | undefined> {
   for (const received of await control.received(ns)) {
     check(received.ns === ns, "Foreign receipt namespace");
     if (remaining() <= CLOSE_MARGIN_MS) break;
-    emit(event, "resolving", { ns, request: received.request });
-
-    const input = await deps.resolve(received);
+    const cached = pending?.request === received.request ? pending.input : undefined;
+    if (!cached) emit(event, "resolving", { ns, request: received.request });
+    const input = cached ?? (await deps.resolve(received));
 
     if (remaining() <= CLOSE_MARGIN_MS) break;
-    emit(event, "submitting", { ns, request: received.request });
+    if (!cached) emit(event, "submitting", { ns, request: received.request });
 
-    const submission = await root.submit(
-      { type: "input", ...input, requestId: received.request },
-      context,
-    );
+    const submission = await admitInput(root, input, received.request);
+    // Preserve receipt order while a model change waits for the current Pi run to finish.
+    if (!submission) return { request: received.request, input };
 
     await control.markAdmitted(received, submission.id);
     emit(event, "admitted", {
@@ -55,6 +58,7 @@ async function admitPending(
       submission: submission.id,
     });
   }
+  return undefined;
 }
 
 /** Runs Pi until idle or the close margin; returns only after a clean joined close. */
@@ -76,6 +80,9 @@ async function run(
     ended = value;
   });
 
+  // At most one validated immutable input waits at the model-change barrier. Keep it
+  // only for this invocation so polling never re-downloads a large S3 receipt.
+  let pending: PendingInput | undefined;
   try {
     harness.resume();
     while (remaining() > CLOSE_MARGIN_MS) {
@@ -84,7 +91,7 @@ async function run(
         throw new Error("Harness closed before worker close");
       }
 
-      await admitPending(ns, control, root, remaining, deps, event);
+      pending = await admitPending(ns, control, root, remaining, deps, event, pending);
       if (!(await control.hasWork(ns))) break;
       await sleep(200);
     }

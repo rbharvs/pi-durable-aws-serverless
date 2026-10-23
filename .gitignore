@@ -8,3 +8,6 @@ coverage/
 .env.*
 .DS_Store
 result
+# Personal deployment settings and encrypted secrets stay outside Git.
+Pulumi.*.yaml
+.pulumi/

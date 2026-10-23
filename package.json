@@ -3,11 +3,14 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "check": "oxlint --deny-warnings . && oxfmt --check . && tsc --noEmit",
-    "test": "vitest run --config vitest.config.ts",
+    "check": "oxlint --deny-warnings . && oxfmt --check . && tsc --noEmit && pnpm --dir infra exec tsc --noEmit",
+    "test": "vitest run --config vitest.config.ts && pnpm test:infra",
+    "test:infra": "vitest run --config vitest.infra.config.ts",
     "test:integration": "vitest run --config vitest.integration.config.ts",
     "format": "oxfmt .",
-    "build": "node build.mjs"
+    "build": "node build.mjs",
+    "infra:build": "pnpm --dir infra build",
+    "deploy": "pnpm check && pnpm test && pnpm test:integration && pnpm build -- \"${WORKER_ENTRY:-src/aws/worker-entry.ts}\" && pnpm infra:build && pulumi -C infra up"
   },
   "dependencies": {
     "@aws-sdk/client-lambda": "3.1152.0",

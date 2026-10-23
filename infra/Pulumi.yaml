@@ -1,0 +1,7 @@
+name: pi-durable-aws
+runtime:
+  name: nodejs
+  options:
+    typescript: false
+main: dist/index.js
+description: Personal, locally deployed Pi durable AWS runtime
