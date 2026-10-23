@@ -36,6 +36,7 @@ async function project(run: (directory: string) => Promise<void>) {
     for (const path of [
       "src",
       "tests/fixtures",
+      "tests/shared/objects.ts",
       "build.mjs",
       "graphs.ts",
       "package.json",
@@ -113,6 +114,58 @@ it("the build CLI writes the checked configured worker bytes and clears only sta
     expect(cli(directory)).toMatchObject({ status: 0 });
     expect((await readdir(join(directory, "dist"))).sort()).toEqual([...files, "keep.txt"].sort());
     expect(await readFile(join(directory, "dist/keep.txt"), "utf8")).toBe("not build-owned");
+  });
+});
+
+it("the production worker exports a handler and its official provider adapters survive CJS bundling", async () => {
+  await project(async (directory) => {
+    expect(cli(directory, "src/aws/worker-entry.ts")).toMatchObject({ status: 0 });
+    const artifact = join(directory, "dist/worker.cjs");
+    const exported = createRequire(import.meta.url)(artifact);
+    expect(Object.keys(exported)).toEqual(["handler"]);
+    expect(typeof exported.handler).toBe("function");
+    // Validation fails before composition acquires any AWS adapters or credentials.
+    await expect(exported.handler({ ns: "invalid/path" }, {})).rejects.toThrow(
+      "Invalid Harness ID",
+    );
+    for (const name of ["api", "reconciler", "worker"]) {
+      const code = await readFile(join(directory, `dist/${name}.cjs`), "utf8");
+      expect(code).not.toMatch(
+        /synthetic-openai-only|synthetic-anthropic-only|fauxProvider|fauxAssistantMessage/,
+      );
+      const metadata = JSON.parse(
+        await readFile(join(directory, `dist/${name}-meta.json`), "utf8"),
+      );
+      const emitted = Object.entries(metadata.outputs[`dist/${name}.cjs`].inputs)
+        .filter(([, input]) => (input as { bytesInOutput: number }).bytesInOutput > 0)
+        .map(([path]) => path);
+      for (const provider of ["openai-responses", "anthropic-messages"]) {
+        expect(emitted.some((path) => path.endsWith(`/api/${provider}.js`))).toBe(
+          name === "worker",
+        );
+      }
+    }
+    // Exercise the same production Models factory and lazy provider clients as bundled CJS,
+    // with fake HTTP streams and selected Node network entry points replaced in-process.
+    // This child has a clean environment, not a portable OS network sandbox.
+    const graph = await bundleGraph("worker", "tests/fixtures/provider-streams.ts", directory);
+    assertGraphBoundaries("worker", graph);
+    const check = join(directory, "provider-check.cjs");
+    await writeFile(check, graph.outputFiles![0].contents);
+    const result = spawnSync(process.execPath, [check], {
+      cwd: directory,
+      env: {
+        HOME: directory,
+        OPENAI_API_KEY: "synthetic-openai-only",
+        ANTHROPIC_API_KEY: "synthetic-anthropic-only",
+      },
+      encoding: "utf8",
+      timeout: 30000,
+    });
+    if (result.error) throw result.error;
+    expect(result.stderr).toBe("");
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("streams passed; HTTP mocked");
   });
 });
 

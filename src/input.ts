@@ -1,5 +1,5 @@
 import type { TextContent, ImageContent } from "@earendil-works/pi-ai";
-import type { UserInput } from "@earendil-works/pi-durable";
+import type { UserInput, ModelRef } from "@earendil-works/pi-durable";
 import {
   check,
   computeSha256,
@@ -22,10 +22,12 @@ export const MAX_BLOCKS = 64;
 
 export const MAX_IMAGES = 8;
 
-/** Validated Pi content and the admission policy to use while the agent is busy. */
+/** Structurally validated Pi input; catalog availability is a separate admission policy. */
 export type AgentInput = {
   readonly content: UserInput;
   readonly whenBusy: "steer" | "followUp";
+  /** Omit to continue with the conversation’s persisted selection; never chooses a default. */
+  readonly model?: ModelRef;
 };
 
 /** Namespace-scoped staging key; unlike a published key, the caller may still mutate its bytes. */
@@ -63,8 +65,8 @@ const MAX_IMAGE_BASE64_LENGTH = Math.ceil(MAX_IMAGE_BYTES / 3) * 4;
 // Root object -> content array -> block object; all block fields are strings.
 const MAX_STAGED_JSON_DEPTH = 3;
 
-// Without duplicate fields, supported shapes need at most 386 colons/commas:
-// root 3 + array 63 + 64 blocks * 5.
+// Without duplicate fields, supported shapes need at most 391 colons/commas:
+// root 5 + model 3 + array 63 + 64 blocks * 5.
 // Leave conservative headroom without allowing an unbounded parsed value graph.
 const MAX_STAGED_JSON_SEPARATORS = 1024;
 
@@ -105,15 +107,32 @@ export function stagedReference(ns: HarnessId, value: unknown): StagedReference 
 export function parseAgentInput(value: unknown): AgentInput {
   const record = object(value);
 
-  assertOnlyFields(record, ["content", "whenBusy"]);
+  assertOnlyFields(record, ["content", "whenBusy", "model"]);
 
   // Read each caller property once, then validate and construct from those values.
   const source = record.content;
   const whenBusy = record.whenBusy;
+  const model = record.model;
 
   check(whenBusy === "steer" || whenBusy === "followUp", "Invalid whenBusy");
 
-  return { content: parseContent(source), whenBusy };
+  return {
+    content: parseContent(source),
+    whenBusy,
+    ...(model === undefined ? {} : { model: parseModel(model) }),
+  };
+}
+
+function parseModel(value: unknown): ModelRef {
+  const model = object(value);
+  assertOnlyFields(model, ["provider", "modelId"]);
+  const provider = text(model.provider);
+  const modelId = text(model.modelId);
+  check(
+    provider.length > 0 && provider.length <= 32 && modelId.length > 0 && modelId.length <= 256,
+    "Model selection exceeds bounded size",
+  );
+  return { provider, modelId };
 }
 
 function parseContent(source: unknown): UserInput {
@@ -180,7 +199,7 @@ function parseImageBlock(block: Record<string, unknown>): ImageContent {
   return { type: "image", data, mimeType };
 }
 
-/** Validates Pi input and returns its canonical JSON, byte length, and SHA-256. */
+/** Stable structural validation and identity, independent of today's provider/model catalog. */
 export function canonical(value: unknown): CanonicalInput {
   const input = parseAgentInput(value);
   const json = JSON.stringify(input);

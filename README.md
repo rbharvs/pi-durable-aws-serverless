@@ -5,13 +5,24 @@ An example of [`@earendil-works/pi-durable`](https://www.npmjs.com/package/@eare
 Validation includes deployed Lambda/Pi workflows and direct DSQL/S3 contracts,
 including controlled failure cases. Model fixtures are deterministic; these tests
 do not establish arbitrary-outage tolerance or exactly-once external effects.
-This repository does not provision infrastructure, authentication, or a scheduler.
+[Local Pulumi deployment](infra/README.md) provisions the AWS infrastructure, direct
+IAM-authenticated Lambda invocation and a one-minute reconciliation schedule.
+After one-time setup, `pnpm run deploy` runs checks/tests, builds all three Lambdas
+including the supplied production worker, then runs interactive Pulumi. Deployment
+is manual; GitHub Actions only validates. Callers select OpenAI or Anthropic models
+at runtime; there is no default model.
 
 SQL storage persists conversations, entries, tasks, submissions, and documents, with atomic commits, document history, and forks. An internal [backend factory](src/sql/backend.ts) pairs Authority and Storage; it is not a public package API.
 
 ## AWS composition
 
-Use Node.js 24 and the pinned dependencies. The operator supplies a regional DSQL endpoint and schema, a private S3 bucket, execution-role permissions, Lambda functions, and periodic reconciler invocations.
+Use Node.js 24 and the pinned dependencies. The [deployment runbook](infra/README.md)
+covers protected regional DSQL/S3 storage, schema initialization, execution roles, three
+Lambdas and scheduling. The [production worker](src/aws/worker-entry.ts) uses Pi's
+public registry and official OpenAI Responses / Anthropic Messages implementations.
+Provider keys come from the worker environment, never source or bundles. Inputs
+select the model; Pi persists it for continuation. The roots can also be composed
+with independently managed infrastructure.
 
 | Environment variable                                       | Required by        |
 | ---------------------------------------------------------- | ------------------ |
@@ -28,41 +39,103 @@ this is not a promise of support for every AWS partition or DSQL service availab
 
 Scope permissions to the configured resources: API needs DSQL connect-admin, S3 GET on `in/*`, S3 PUT+GET on `p/*`, and worker invocation; worker needs DSQL connect-admin and S3 PUT+GET on `p/*`; reconciler needs DSQL connect-admin and worker invocation. Without S3 ListBucket permission, a missing key may return 403, which remains retryable rather than confirmed missing.
 
-`pnpm build` emits Node 24 CommonJS `dist/api.cjs` and `dist/reconciler.cjs`, with matching
-`*-meta.json` files. Both handlers export `handler`. The deployer supplies a configured worker
-entry using the pinned Pi 1.3.0:
+`pnpm run deploy` builds the production entry automatically. To build without deploying:
 
-```ts
-import { createAwsHandler } from "./src/aws/worker.ts";
-import { harnessOptions, rootAgent } from "./application.ts";
-
-export const handler = createAwsHandler(harnessOptions, rootAgent);
+```sh
+nix develop --command pnpm build -- src/aws/worker-entry.ts
 ```
 
-`harnessOptions` supplies models and tools; `rootAgent` selects the agent. Run
-`nix develop --command pnpm build -- path/to/worker.ts` to also write `dist/worker.cjs` and its
-metadata, using the **same bytes checked by the build**. There is no default worker: without an
-entry, the build checks the factory but removes stale worker outputs. These six named code/metadata
-paths are build-owned; do not use them as source files. Other files in `dist` are left alone.
+This emits Node 24 CommonJS `dist/api.cjs`, `dist/reconciler.cjs` and `dist/worker.cjs`,
+each exporting `handler`, with matching `*-meta.json` files. The packaged bytes are
+the **same bytes checked by the build**. For custom applications, `createAwsHandler`
+remains available; an optional `WORKER_ENTRY` deployment environment override selects
+your tested entry. No override is needed for the supplied worker.
+
+The low-level `pnpm build` command without an entry still checks the factory and
+removes stale worker outputs; use the explicit entry above for a complete build.
+These six named code/metadata paths are build-owned; do not use them as source files.
+Other files in `dist` are left alone.
 
 [Dependency checks](graphs.ts) exclude emitted SQL/AWS code from the public index, execution-engine
 code from API/reconciler, S3 from reconciler, and the project dispatcher from worker. Tree-shaken
 imports and operator Lambda tools are allowed. These checks do not certify behavior, permissions,
 dynamic loads, or prebundled code. Builds never execute operator entries or certify their
-`handler` export. Tests load actual CLI artifacts with [a controlled worker](tests/fixtures/aws-worker.ts);
-operators must test their own entry and deploy the resulting bytes.
+`handler` export. Tests load the production CLI artifact, exercise its official
+provider adapters as bundled CJS against synthetic HTTP streams, with selected
+Node network entry points replaced in-process (not an OS sandbox),
+and retain [controlled worker](tests/fixtures/aws-worker.ts) packaging tests. Custom
+entry owners must test their own handler.
 
 API and worker events are direct Lambda payloads, not API Gateway envelopes. Invoke the API with
 `{ ns, request, command }`; advisory worker events carry `{ ns }` plus optional correlation fields.
 
-**Provision DSQL manually before use.** [schema.sql](src/sql/schema.sql) is PostgreSQL DDL, not a ready-to-run DSQL migration. Prepare and review separate DSQL statements, run DDL outside explicit transactions, create indexes with `CREATE INDEX ASYNC`, and wait for successful jobs and valid indexes. Unsupported index clauses need explicit review, not silent SQL changes. Provisioning, IAM, deployment, DSQL DDL, and object-retention policies remain operator responsibilities.
+**Initialize DSQL before submitting API requests.** Lambdas use the normal account
+concurrency pool without dedicated reservations; the one-minute schedule is enabled.
+After the first apply, the [deployment runbook](infra/README.md) initializes
+[schema.sql](src/sql/schema.sql) once, using `CREATE INDEX ASYNC` and waiting for each
+job. Scheduled reconciliation may briefly fail during this first bootstrap until
+the schema is ready. Existing or partially initialized schemas need manual review,
+not bootstrap replay. No SQL runs during Pulumi preview or apply.
 
 ## Usage
 
 Each Harness ID and request ID identifies an immutable receipt. Retrying with the same canonical input returns the original receipt; different input returns a conflict.
 
-- Inline commands: `{ kind: "inline", input: { content, whenBusy } }`.
-- Staged commands: `{ kind: "s3", key, sha256, bytes }`, referencing an uploaded UTF-8 JSON file containing `{ content, whenBusy }`.
+- Inline commands: `{ kind: "inline", input: { content, whenBusy, model? } }`.
+- Staged commands: `{ kind: "s3", key, sha256, bytes }`, referencing uploaded UTF-8 JSON
+  containing the same input shape. Model selection is part of the immutable receipt
+  hash. Reusing a request ID with a different model is a conflict.
+
+For example, invoke the API with an explicit selection:
+
+```json
+{
+  "ns": "example-conversation",
+  "request": "message-001",
+  "command": {
+    "kind": "inline",
+    "input": {
+      "content": "Explain durable conversations.",
+      "whenBusy": "followUp",
+      "model": { "provider": "openai", "modelId": "gpt-4.1" }
+    }
+  }
+}
+```
+
+For Anthropic, use `"model": { "provider": "anthropic", "modelId": "claude-sonnet-4-5" }`.
+These are examples from the pinned Pi 1.3.0 chat catalogs, **not defaults**. For new
+receipts, provider IDs are exactly `openai` and `anthropic`; model IDs must match their
+[public Pi catalogs](src/model-selection.ts). Catalog membership does not guarantee
+your provider account has access. No provider request runs during API validation.
+
+- The first input must select a model. Later inputs may omit it to use the persisted
+  choice, including after a cold start, or supply another supported model.
+- The API acknowledges a durable receipt, **not an answer**. Missing an initial
+  model settles that input as `unanswered` with reason `model_required`; send a new
+  request ID with a selection to proceed. Invalid provider/model selections are
+  rejected at admission (`invalid-input`, or `staged-content-invalid` for S3).
+  Provider authentication/access failures remain Pi execution failures, not API
+  admission failures. Answers and submission outcomes are stored in Pi history;
+  this example does not add a result-query endpoint.
+- A model change waits until the current Pi run finishes. It does not retarget an
+  active run, even with `whenBusy: "steer"`. After a failed run, Pi may be idle with
+  queued inputs that have not started. The next input lets Pi drain those inputs
+  under the newly selected model; no queued messages are discarded. Later receipts
+  wait behind a change while a run is active; a Lambda close margin leaves them
+  durable for the next worker. Same-model steering/follow-up retains Pi's normal behavior.
+  Receipt order is
+  `receivedAt`, then request ID for ties, not a promise of client send order.
+- The worker uses Pi's public transactional `configure` helper, then submits the
+  message. On recovery it checks Pi's request identity **before** configuring;
+  replay cannot restore an older model after the submission already exists.
+  Old receipts without `model` keep their original canonical bytes/hashes.
+- `canonical()` and `parseCommand()` validate stable structure and identity, not
+  current catalog membership. Storage and worker reads remain valid when a model
+  leaves the catalog. A retry of that accepted input still returns `duplicate`;
+  changed input still conflicts. A new unsupported selection is rejected (the API
+  may read a receipt to distinguish a retry). If the worker no longer has the model,
+  Pi settles that input `unanswered` / `no_model`, rather than blocking receipt reads.
 
 Staged keys use `in/<Harness ID>/<name>`, where the name is 1–128 ASCII letters, digits, or `._-`, excluding `.` and `..`. `sha256` and `bytes` describe the raw uploaded bytes, not canonical JSON. Multipart staging is supported: supply the full raw-object SHA-256, not S3's composite checksum. See [input limits](src/input.ts).
 
